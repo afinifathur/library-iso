@@ -1,0 +1,6 @@
+// Add this to the 'disks' array in config/filesystems.php
+'documents' => [
+    'driver' => 'local',
+    'root' => storage_path('app/documents'),
+    'visibility' => 'private',
+],
