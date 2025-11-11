@@ -122,7 +122,7 @@ Route::get('/departments/{department}', [DepartmentController::class, 'show'])->
 |--------------------------------------------------------------------------
 */
 Route::middleware('auth')->group(function () {
-    Route::get('/drafts',                   [DraftController::class, 'index'])->name('drafts.index');   // Draft Container
+    Route::get('/drafts',                   [DraftController::class, 'index'])->name('drafts.index'); // Draft Container
     Route::get('/drafts/{version}',         [DraftController::class, 'show'])->name('drafts.show');
     Route::post('/drafts/{version}/delete', [DraftController::class, 'destroy'])->name('drafts.destroy');
     Route::post('/drafts/{version}/reopen', [DraftController::class, 'reopen'])->name('drafts.reopen');
@@ -144,7 +144,8 @@ Route::middleware('auth')->group(function () {
         ->whereNumber('version')
         ->name('approval.approve');
 
-    Route::post('/approval/{version}/reject',  [ApprovalController::class, 'reject'])
-        ->whereNumber('version')
+    // Opsi A: sesuaikan placeholder dengan parameter controller ($versionId)
+    Route::post('/approval/{versionId}/reject', [ApprovalController::class, 'reject'])
+        ->whereNumber('versionId')
         ->name('approval.reject');
 });
