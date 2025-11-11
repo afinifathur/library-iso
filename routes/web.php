@@ -30,16 +30,14 @@ Route::redirect('/', '/login');
 
 /*
 |--------------------------------------------------------------------------
-| DASHBOARD
+| DASHBOARD (auth)
 |--------------------------------------------------------------------------
 */
-Route::get('/dashboard', [DashboardController::class, 'index'])
-    ->middleware('auth')
-    ->name('dashboard.index');
+Route::middleware('auth')->get('/dashboard', [DashboardController::class, 'index'])->name('dashboard.index');
 
 /*
 |--------------------------------------------------------------------------
-| EXTRA ISO ROUTES (optional separate file)
+| EXTRA ISO ROUTES (opsional file terpisah)
 |--------------------------------------------------------------------------
 */
 $isoRoutes = base_path('routes/iso_documents.php');
@@ -50,6 +48,7 @@ if (file_exists($isoRoutes)) {
 /*
 |--------------------------------------------------------------------------
 | DOCUMENTS (auth)
+| Termasuk: create/upload/show/compare/edit/updateCombined + download version
 |--------------------------------------------------------------------------
 */
 Route::middleware('auth')->prefix('documents')->name('documents.')->group(function () {
@@ -57,25 +56,36 @@ Route::middleware('auth')->prefix('documents')->name('documents.')->group(functi
     Route::get('create', [DocumentController::class, 'create'])->name('create');
     Route::post('upload-pdf', [DocumentController::class, 'uploadPdf'])->name('uploadPdf');
 
-    // compare
+    // detail dokumen
+    Route::get('{document}', [DocumentController::class, 'show'])
+        ->whereNumber('document')
+        ->name('show');
+
+    // compare versi dokumen
     Route::get('{document}/compare', [DocumentController::class, 'compare'])
         ->whereNumber('document')
         ->name('compare');
 
-    // edit/update
+    // form edit metadata (opsional, tetap dipakai view lama)
     Route::get('{document}/edit', [DocumentController::class, 'edit'])
         ->whereNumber('document')
         ->name('edit');
 
-    Route::put('{document}', [DocumentController::class, 'update'])
+    // UPDATE COMBINED (menggantikan update lama)
+    Route::put('{document}', [DocumentController::class, 'updateCombined'])
         ->whereNumber('document')
-        ->name('update');
+        ->name('updateCombined');
+
+    // download berkas versi (via DocumentController)
+    Route::get('versions/{version}/download', [DocumentController::class, 'downloadVersion'])
+        ->whereNumber('version')
+        ->name('versions.download');
 });
 
 /*
 |--------------------------------------------------------------------------
 | VERSIONS (auth)
-| Termasuk: create, store, edit, update, submit, download
+| Termasuk: create/store/show/edit/update/submit
 |--------------------------------------------------------------------------
 */
 Route::middleware('auth')->prefix('versions')->name('versions.')->group(function () {
@@ -83,15 +93,15 @@ Route::middleware('auth')->prefix('versions')->name('versions.')->group(function
     Route::get('create', [DocumentVersionController::class, 'create'])->name('create');
     Route::post('',       [DocumentVersionController::class, 'store'])->name('store');
 
+    // show single version (baru, sesuai instruksi)
+    Route::get('{version}', [DocumentVersionController::class, 'show'])
+        ->whereNumber('version')
+        ->name('show');
+
     // submit for approval
     Route::post('{version}/submit', [DocumentVersionController::class, 'submitForApproval'])
         ->whereNumber('version')
         ->name('submit');
-
-    // download
-    Route::get('{version}/download', [DocumentVersionController::class, 'download'])
-        ->whereNumber('version')
-        ->name('download');
 
     // edit/update
     Route::get('{version}/edit', [DocumentVersionController::class, 'edit'])
@@ -117,8 +127,10 @@ Route::get('/departments/{department}', [DepartmentController::class, 'show'])->
 |--------------------------------------------------------------------------
 */
 Route::middleware('auth')->group(function () {
-    Route::get('/approval',       [ApprovalController::class, 'index'])->name('approval.index');
-    Route::get('/approval-queue', [ApprovalController::class, 'index'])->name('approval.queue');
+    Route::get('/approval', [ApprovalController::class, 'index'])->name('approval.index');
+
+    // pertahankan URL lama sebagai redirect ke /approval
+    Route::redirect('/approval-queue', '/approval');
 
     Route::post('/approval/{version}/approve', [ApprovalController::class, 'approve'])
         ->whereNumber('version')
