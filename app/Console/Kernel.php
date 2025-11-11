@@ -17,6 +17,7 @@ class Kernel extends ConsoleKernel
     protected $commands = [
         \App\Console\Commands\ImportDocumentsCommand::class,
         \App\Console\Commands\PopulateShortCodeCommand::class,
+         \App\Console\Commands\CleanOldDrafts::class,
     ];
 
     protected function schedule(Schedule $schedule)
@@ -30,4 +31,5 @@ class Kernel extends ConsoleKernel
 
         require base_path('routes/console.php');
     }
+    
 }

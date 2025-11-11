@@ -1,78 +1,141 @@
+{{-- resources/views/approval/index.blade.php --}}
 @extends('layouts.iso')
 
 @section('title','Approval Queue')
 
 @section('content')
-<div style="max-width:1000px;margin:18px auto;">
-  <h2>Approval Queue @if($status) — {{ ucfirst($status) }} @endif</h2>
+<div class="container" style="max-width:1200px;margin:24px auto;">
+  <h2 class="mb-3">Approval Queue — {{ strtoupper($stage ?? 'ALL') }}</h2>
 
+  {{-- Flash messages --}}
   @if(session('success'))
-    <div style="padding:10px;background:#ecfccb;border:1px solid #d9f99d;margin-bottom:12px;border-radius:8px;color:#25630f;">
-      {{ session('success') }}
-    </div>
+    <div class="alert alert-success">{{ session('success') }}</div>
+  @endif
+  @if(session('warning'))
+    <div class="alert alert-warning">{{ session('warning') }}</div>
+  @endif
+  @if(session('error'))
+    <div class="alert alert-danger">{{ session('error') }}</div>
   @endif
 
-  <div style="margin-bottom:12px;">
-    <a class="btn" href="{{ route('approval.index', ['status'=>'pending']) }}">Pending</a>
-    <a class="btn-muted" href="{{ route('approval.index', ['status'=>'approved']) }}">Approved</a>
-    <a class="btn-muted" href="{{ route('approval.index', ['status'=>'rejected']) }}">Rejected</a>
-    <a class="btn-muted" href="{{ route('approval.index') }}">All</a>
+  <div class="mb-4 d-flex gap-2">
+    <a href="{{ route('drafts.index') }}" class="btn btn-outline-secondary">Draft Container</a>
+    <a href="{{ route('approval.index') }}" class="btn btn-primary">Refresh</a>
   </div>
 
-  <table style="width:100%;border-collapse:collapse;background:#fff;border:1px solid #eef3f8;border-radius:8px;">
-    <thead>
-      <tr style="text-align:left;color:#555">
-        <th style="padding:10px;border-bottom:1px solid #f0f4f8">When</th>
-        <th style="padding:10px;border-bottom:1px solid #f0f4f8">Document</th>
-        <th style="padding:10px;border-bottom:1px solid #f0f4f8">Version</th>
-        <th style="padding:10px;border-bottom:1px solid #f0f4f8">By</th>
-        <th style="padding:10px;border-bottom:1px solid #f0f4f8">Status</th>
-        <th style="padding:10px;border-bottom:1px solid #f0f4f8">Action</th>
-      </tr>
-    </thead>
-    <tbody>
-      @forelse($versions as $v)
-      <tr>
-        <td style="padding:10px;border-bottom:1px solid #fafafa; width:130px;">
-          {{ $v->created_at ? $v->created_at->format('Y-m-d H:i') : '-' }}
-        </td>
-        <td style="padding:10px;border-bottom:1px solid #fafafa;">
-          <a href="{{ route('documents.show', $v->document->id) }}">{{ $v->document->doc_code }} — {{ $v->document->title }}</a>
-        </td>
-        <td style="padding:10px;border-bottom:1px solid #fafafa;">{{ $v->version_label }}</td>
-        <td style="padding:10px;border-bottom:1px solid #fafafa;">{{ optional($v->creator)->name ?? '-' }}</td>
-        <td style="padding:10px;border-bottom:1px solid #fafafa;">{{ $v->status }}</td>
-        <td style="padding:10px;border-bottom:1px solid #fafafa; width:260px;">
-          <a class="btn" href="{{ route('documents.show', $v->document->id) }}" style="margin-right:6px">Open</a>
+  @if(empty($pending) || $pending->isEmpty())
+    <div class="card p-4">Tidak ada dokumen yang menunggu persetujuan.</div>
+  @else
+    <div class="card p-3 mb-4">
+      <div class="table-responsive">
+        <table class="table table-striped table-hover mb-0 align-middle">
+          <thead>
+            <tr>
+              <th>Kode Dokumen</th>
+              <th>Judul</th>
+              <th>Departemen</th>
+              <th>Versi</th>
+              <th>Pengaju</th>
+              <th>When</th>
+              <th class="text-center">Aksi</th>
+            </tr>
+          </thead>
+          <tbody>
+            @foreach($pending as $ver)
+              <tr>
+                <td>
+                  <a href="{{ route('documents.show', $ver->document->id) }}">
+                    {{ $ver->document->doc_code }}
+                  </a>
+                </td>
+                <td>{{ \Illuminate\Support\Str::limit($ver->document->title, 60) }}</td>
+                <td>{{ $ver->document->department->code ?? '-' }}</td>
+                <td>{{ $ver->version_label }}</td>
+                <td>{{ optional($ver->creator)->email ?? '-' }}</td>
+                <td>{{ $ver->created_at?->format('Y-m-d') ?? '-' }}</td>
+                <td class="text-center">
+                  {{-- Open detail (anchor ke versi) --}}
+                  <a href="{{ route('documents.show', $ver->document->id).'#v'.$ver->id }}" class="btn btn-sm btn-outline-primary">Open</a>
 
-          {{-- Approve form --}}
-          <form action="{{ route('approval.approve', $v->id) }}" method="post" style="display:inline-block;margin-right:6px;">
-            @csrf
-            <input type="hidden" name="note" value="Approved by {{ auth()->user()->name ?? auth()->user()->email }}">
-            <button class="btn" type="submit" onclick="return confirm('Approve version {{ $v->version_label }} ?')">Approve</button>
-          </form>
+                  {{-- Compare (jika route tersedia) --}}
+                  @if(Route::has('documents.compare'))
+                    <a href="{{ route('documents.compare', $ver->document->id) }}" class="btn btn-sm btn-outline-info">Compare</a>
+                  @endif
 
-          {{-- Reject: opens small inline form --}}
-          <button class="btn-muted" onclick="document.getElementById('reject-form-{{ $v->id }}').style.display='block'">Reject</button>
+                  {{-- Approve --}}
+                  <form action="{{ route('approval.approve', $ver->id) }}" method="POST" class="d-inline">
+                    @csrf
+                    <input type="hidden" name="note" value="Approved by {{ auth()->user()->name ?? auth()->user()->email }}">
+                    <button class="btn btn-sm btn-success" onclick="return confirm('Approve version {{ $ver->version_label }} ?')">Approve</button>
+                  </form>
 
-          <form id="reject-form-{{ $v->id }}" action="{{ route('approval.reject',$v->id) }}" method="post" style="display:none;margin-top:8px;">
-            @csrf
-            <textarea name="note" rows="2" style="width:100%;padding:6px;border-radius:6px;border:1px solid #e6eef8" placeholder="Rejection note (optional)"></textarea>
-            <div style="margin-top:6px">
-              <button class="btn" type="submit" onclick="return confirm('Reject this version?')">Submit Reject</button>
-              <button class="btn-muted" type="button" onclick="document.getElementById('reject-form-{{ $v->id }}').style.display='none'">Cancel</button>
-            </div>
-          </form>
-        </td>
-      </tr>
-      @empty
-      <tr><td colspan="6" style="padding:12px" class="small-muted">No versions in queue.</td></tr>
-      @endforelse
-    </tbody>
-  </table>
+                  {{-- Reject (modal) --}}
+                  <button
+                    class="btn btn-sm btn-danger"
+                    data-bs-toggle="modal"
+                    data-bs-target="#rejectModal"
+                    data-version-id="{{ $ver->id }}"
+                    data-doc-code="{{ $ver->document->doc_code }}"
+                    data-version-label="{{ $ver->version_label }}"
+                  >Reject</button>
+                </td>
+              </tr>
+            @endforeach
+          </tbody>
+        </table>
+      </div>
+    </div>
+  @endif
+</div>
 
-  <div style="margin-top:12px;">
-    {{ $versions->links() }}
+{{-- Reject Modal (reusable) --}}
+<div class="modal fade" id="rejectModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-md">
+    <form id="rejectForm" method="POST" action="">
+      @csrf
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">
+            Reject <span id="rejectDocCode" class="fw-semibold"></span>
+            <small class="text-muted" id="rejectVersionLabel"></small>
+          </h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <label for="rejectNotes" class="form-label">Alasan reject <small class="text-muted">(wajib)</small></label>
+          <textarea name="notes" id="rejectNotes" class="form-control" rows="5" required></textarea>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Batal</button>
+          <button type="submit" class="btn btn-danger">Submit Reject</button>
+        </div>
+      </div>
+    </form>
   </div>
 </div>
 @endsection
+
+@push('scripts')
+<script>
+  // Bootstrap 5 modal: isi form action & label secara dinamis
+  const rejectModal = document.getElementById('rejectModal');
+  if (rejectModal) {
+    rejectModal.addEventListener('show.bs.modal', function (event) {
+      const button = event.relatedTarget;
+      const versionId = button.getAttribute('data-version-id');
+      const docCode = button.getAttribute('data-doc-code') || '';
+      const verLabel = button.getAttribute('data-version-label') || '';
+
+      const form = document.getElementById('rejectForm');
+      const notes = document.getElementById('rejectNotes');
+      const codeEl = document.getElementById('rejectDocCode');
+      const labelEl = document.getElementById('rejectVersionLabel');
+
+      form.action = "{{ url('approval') }}/" + versionId + "/reject";
+      notes.value = '';
+      codeEl.textContent = docCode ? `(${docCode})` : '';
+      labelEl.textContent = verLabel ? `— ${verLabel}` : '';
+    });
+  }
+</script>
+@endpush

@@ -1,25 +1,29 @@
 @extends('layouts.iso')
 
+@section('title', 'Daftar Departemen')
+
 @section('content')
-<div style="max-width:800px;margin:0 auto;">
-  <h2 style="margin-top:0">Daftar Departemen</h2>
+<div style="max-width:1000px;margin:24px auto;">
+  <h2>📁 Daftar Departemen</h2>
 
   @if($departments->isEmpty())
-    <div class="small-muted">Belum ada departemen terdaftar.</div>
+    <p style="color:#777;">Belum ada departemen terdaftar.</p>
   @else
-    <table class="table" style="width:100%">
+    <table style="width:100%;border-collapse:collapse;background:#fff;">
       <thead>
-        <tr><th>Kode</th><th>Nama Departemen</th><th style="width:150px;">Aksi</th></tr>
+        <tr style="border-bottom:1px solid #ddd;text-align:left;">
+          <th style="padding:8px;">Kode</th>
+          <th style="padding:8px;">Nama Departemen</th>
+          <th style="padding:8px;">PIC</th>
+        </tr>
       </thead>
       <tbody>
-        @foreach($departments as $dept)
-        <tr>
-          <td>{{ $dept->code }}</td>
-          <td>{{ $dept->name }}</td>
-          <td>
-            <a class="btn" href="{{ route('departments.show', $dept->id) }}">Lihat Dokumen</a>
-          </td>
-        </tr>
+        @foreach($departments as $dep)
+          <tr style="border-bottom:1px solid #f0f0f0;">
+            <td style="padding:8px;">{{ $dep->code }}</td>
+            <td style="padding:8px;">{{ $dep->name }}</td>
+            <td style="padding:8px;">{{ $dep->pic_name }}</td>
+          </tr>
         @endforeach
       </tbody>
     </table>

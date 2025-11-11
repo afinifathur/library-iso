@@ -9,6 +9,7 @@ use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 // Opsional (composer require jfcherng/php-diff)
@@ -136,7 +137,8 @@ class DocumentController extends Controller
         $master_path = null;
         if ($request->hasFile('master_file')) {
             $master      = $request->file('master_file');
-            $master_name = now()->timestamp.'_master_'.Str::random(6).'_'.preg_replace('/[^\w\.\-]/', '_', $master->getClientOriginalName());
+            $safeName    = $this->safeFilename($master->getClientOriginalName());
+            $master_name = now()->timestamp.'_master_'.Str::random(6).'_'.$safeName;
             $master_path = $document->doc_code.'/master/'.$master_name;
             $disk->put($master_path, file_get_contents($master->getRealPath()));
         }
@@ -147,7 +149,8 @@ class DocumentController extends Controller
         $checksum  = null;
         if ($request->hasFile('file')) {
             $file      = $request->file('file');
-            $filename  = now()->timestamp.'_'.Str::random(6).'_'.preg_replace('/[^\w\.\-]/', '_', $file->getClientOriginalName());
+            $safeName  = $this->safeFilename($file->getClientOriginalName());
+            $filename  = now()->timestamp.'_'.Str::random(6).'_'.$safeName;
             $file_path = $document->doc_code.'/'.$request->input('version_label').'/'.$filename;
             $content   = file_get_contents($file->getRealPath());
             $disk->put($file_path, $content);
@@ -321,13 +324,15 @@ class DocumentController extends Controller
             }
 
             $file     = $request->file('file');
-            $filename = now()->timestamp.'_'.Str::random(6).'_'.preg_replace('/[^\w\.\-]/', '_', $file->getClientOriginalName());
+            $safeName = $this->safeFilename($file->getClientOriginalName());
+            $filename = now()->timestamp.'_'.Str::random(6).'_'.$safeName;
             $folder   = $document->doc_code.'/'.$validated['version_label'];
             $file_path = $folder.'/'.$filename;
 
-            $disk->put($file_path, file_get_contents($file->getRealPath()));
+            $content   = file_get_contents($file->getRealPath());
+            $disk->put($file_path, $content);
             $file_mime = $file->getClientMimeType() ?: 'application/octet-stream';
-            $checksum  = hash_file('sha256', $file->getRealPath());
+            $checksum  = hash('sha256', $content);
         }
 
         // Jika belum ada versi → buat baru
@@ -384,6 +389,123 @@ class DocumentController extends Controller
         }
 
         return $disk->download($version->file_path, basename($version->file_path));
+    }
+
+    /**
+     * BUAT DOKUMEN BARU + BASELINE V1 APPROVED (sesuai instruksi).
+     * (POST /documents)
+     */
+    public function store(Request $request)
+    {
+        $user = $request->user();
+
+        $data = $request->validate([
+            'doc_code'       => 'nullable|string|max:120',
+            'title'          => 'required|string|max:255',
+            'category'       => 'required|string|max:20',
+            'department_id'  => 'required|integer|exists:departments,id',
+            'file'           => 'nullable|file|mimes:pdf,doc,docx|max:51200',
+            'pasted_text'    => 'nullable|string',
+            'version_label'  => 'nullable|string|max:50',
+            'approved_at'    => 'nullable|date',
+            'approved_by'    => 'nullable|email',
+            'created_at'     => 'nullable|date',
+            'change_note'    => 'nullable|string|max:2000',
+            'doc_number'     => 'nullable|string|max:120',
+        ]);
+
+        // Generate doc_code jika kosong
+        if (empty($data['doc_code'])) {
+            $dept      = Department::find($data['department_id']);
+            $deptCode  = $dept?->code ?? 'MISC';
+            if (method_exists(Document::class, 'generateDocCode')) {
+                $data['doc_code'] = Document::generateDocCode($data['category'], $deptCode);
+            } else {
+                $data['doc_code'] = strtoupper($data['category']).'.'.$deptCode.'.'.str_pad((string) random_int(1, 999), 3, '0', STR_PAD_LEFT);
+            }
+        }
+
+        $disk = Storage::disk('documents');
+
+        // Simpan file (opsional)
+        $file_path = null;
+        $file_mime = null;
+        $checksum  = null;
+        if ($request->hasFile('file')) {
+            $file     = $request->file('file');
+            $safeName = $this->safeFilename($file->getClientOriginalName());
+            $filename = time().'_'.Str::slug(pathinfo($safeName, PATHINFO_FILENAME)).'.'.pathinfo($safeName, PATHINFO_EXTENSION);
+            // sementara folder v1 (atau label custom) supaya rapi
+            $tmpVersionLabel = $data['version_label'] ?? 'v1';
+            $folder   = $data['doc_code'].'/'.$tmpVersionLabel;
+            $file_path = $folder.'/'.$filename;
+
+            $content   = file_get_contents($file->getRealPath());
+            $disk->put($file_path, $content);
+            $file_mime = $file->getClientMimeType() ?: 'application/octet-stream';
+            $checksum  = hash('sha256', $content);
+        }
+
+        // Resolusi approved_by (email -> id) default uploader
+        $approvedByUserId = $user?->id;
+        if (!empty($data['approved_by'])) {
+            $u = \App\Models\User::where('email', $data['approved_by'])->first();
+            if ($u) {
+                $approvedByUserId = $u->id;
+            }
+        }
+
+        $versionLabel     = $data['version_label'] ?? 'v1';
+        $versionCreatedAt = !empty($data['created_at']) ? Carbon::parse($data['created_at']) : now();
+        $approvedAt       = !empty($data['approved_at']) ? Carbon::parse($data['approved_at']) : now();
+
+        // Transaksi untuk konsistensi DB (file sudah tertulis; jika gagal DB, kamu bisa hapus file manual sesuai kebutuhan)
+        return DB::transaction(function () use ($request, $data, $versionLabel, $versionCreatedAt, $approvedAt, $approvedByUserId, $file_path, $file_mime, $checksum) {
+            // Buat dokumen
+            $document = Document::create([
+                'doc_code'      => $data['doc_code'],
+                'title'         => $data['title'],
+                'department_id' => (int) $data['department_id'],
+                'category'      => $data['category'] ?? null,
+                'doc_number'    => $data['doc_number'] ?? null,
+            ]);
+
+            // Buat versi baseline (approved)
+            $version = new DocumentVersion();
+            $version->document_id    = $document->id;
+            $version->version_label  = $versionLabel;
+            $version->status         = 'approved';     // baseline approved
+            $version->approval_stage = 'DONE';
+            $version->created_by     = $request->user()->id ?? null;
+            $version->file_path      = $file_path;
+            $version->file_mime      = $file_mime;
+            $version->checksum       = $checksum;
+            $version->change_note    = $data['change_note'] ?? null;
+
+            if ($request->filled('pasted_text')) {
+                $clean = $this->normalizeText($request->input('pasted_text'));
+                $version->pasted_text = $clean;
+                $version->plain_text  = $clean;
+            }
+
+            // timestamps manual untuk baseline/history
+            $version->timestamps  = false;
+            $version->created_at  = $versionCreatedAt;
+            $version->updated_at  = $versionCreatedAt;
+            $version->approved_by = $approvedByUserId;
+            $version->approved_at = $approvedAt;
+            $version->save();
+
+            // set pointer current version
+            $document->current_version_id = $version->id;
+            $document->revision_number    = 1;
+            $document->revision_date      = $approvedAt;
+            $document->save();
+
+            return redirect()
+                ->route('documents.show', $document->id)
+                ->with('success','Document created as baseline ('.$versionLabel.').');
+        });
     }
 
     /* =========================
@@ -477,5 +599,13 @@ class DocumentController extends Controller
         $text = preg_replace('/[ \t]{2,}/', ' ', $text);
         $text = preg_replace("/\n{3,}/", "\n\n", $text);
         return trim($text);
+    }
+
+    protected function safeFilename(string $original): string
+    {
+        // Amankan nama file (tanpa karakter aneh)
+        $name = preg_replace('/[^\w\.\-]+/u', '_', $original);
+        // Hindari nama kosong
+        return $name ?: ('file_'.Str::random(8));
     }
 }

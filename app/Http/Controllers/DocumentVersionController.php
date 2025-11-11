@@ -6,6 +6,7 @@ use App\Models\Document;
 use App\Models\DocumentVersion;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 
@@ -35,12 +36,12 @@ class DocumentVersionController extends Controller
             'version_label' => ['required', 'string', 'max:50'],
 
             // wajib salah satu: file atau pasted_text
-            'file'         => ['required_without:pasted_text', 'nullable', 'file', 'mimes:pdf,doc,docx', 'max:51200'],
-            'pasted_text'  => ['required_without:file', 'nullable', 'string', 'max:500000'],
+            'file'        => ['required_without:pasted_text', 'nullable', 'file', 'mimes:pdf,doc,docx', 'max:51200'],
+            'pasted_text' => ['required_without:file', 'nullable', 'string', 'max:500000'],
 
-            'change_note'  => ['nullable', 'string', 'max:2000'],
-            'signed_by'    => ['nullable', 'string', 'max:191'],
-            'signed_at'    => ['nullable', 'date'],
+            'change_note' => ['nullable', 'string', 'max:2000'],
+            'signed_by'   => ['nullable', 'string', 'max:191'],
+            'signed_at'   => ['nullable', 'date'],
         ]);
 
         $document = Document::findOrFail($request->input('document_id'));
@@ -51,51 +52,44 @@ class DocumentVersionController extends Controller
         $checksum = null;
 
         if ($request->hasFile('file')) {
-            $file     = $request->file('file');
+            $file   = $request->file('file');
+            $folder = 'documents/' . ($document->doc_code ?: 'misc');
 
-            // folder berdasarkan doc_code (fallback "misc")
-            $folder   = 'documents/' . ($document->doc_code ?: 'misc');
-
-            // filename aman
             $original = pathinfo($file->getClientOriginalName(), PATHINFO_FILENAME);
             $ext      = $file->getClientOriginalExtension();
             $safeName = time() . '_' . Str::random(6) . '_' . Str::slug($original, '_') . ($ext ? ".{$ext}" : '');
 
-            // simpan file ke disk local
             $filePath = $file->storeAs($folder, $safeName, 'local');
-
-            // meta
-            $fileMime = $file->getMimeType(); // server-side mime
+            $fileMime = $file->getMimeType();
             $checksum = hash_file('sha256', $file->getRealPath());
         }
 
         $version = new DocumentVersion();
-        $version->document_id    = $document->id;
-        $version->version_label  = $request->string('version_label');
-        $version->status         = 'draft';
-        $version->created_by     = $userId;
+        $version->document_id   = $document->id;
+        $version->version_label = (string) $request->string('version_label');
+        $version->status        = 'draft';
+        $version->approval_stage = 'KABAG';
+        $version->created_by    = $userId;
 
-        $version->file_path      = $filePath;
-        $version->file_mime      = $fileMime;
-        $version->checksum       = $checksum;
+        $version->file_path = $filePath;
+        $version->file_mime = $fileMime;
+        $version->checksum  = $checksum;
 
-        $version->change_note    = $request->input('change_note');
-        $version->signed_by      = $request->input('signed_by');
-        $version->signed_at      = $request->filled('signed_at')
+        $version->change_note = $request->input('change_note');
+        $version->signed_by   = $request->input('signed_by');
+        $version->signed_at   = $request->filled('signed_at')
             ? Carbon::parse($request->input('signed_at'))
             : null;
 
         // simpan teks jika ada (plain_text & pasted_text disamakan)
         if ($request->filled('pasted_text')) {
-            $version->plain_text  = $request->input('pasted_text');
-            $version->pasted_text = $request->input('pasted_text');
+            $text = (string) $request->input('pasted_text');
+            $version->plain_text  = $text;
+            $version->pasted_text = $text;
         }
 
-        // default stage bisnis
-        $version->approval_stage = 'KABAG';
         $version->save();
 
-        // gunakan halaman detail versi yang baru dibuat
         return redirect()
             ->route('versions.show', $version)
             ->with('success', 'Version created (draft). You can Submit for Approval when ready.');
@@ -119,13 +113,13 @@ class DocumentVersionController extends Controller
         $request->validate([
             'version_label' => ['required', 'string', 'max:50'],
 
-            // update file opsional; kalau tidak upload file baru, file lama dipertahankan
-            'file'         => ['nullable', 'file', 'mimes:pdf,doc,docx', 'max:51200'],
-            'pasted_text'  => ['nullable', 'string', 'max:500000'],
+            // file opsional; jika tidak upload, file lama dipertahankan
+            'file'        => ['nullable', 'file', 'mimes:pdf,doc,docx', 'max:51200'],
+            'pasted_text' => ['nullable', 'string', 'max:500000'],
 
-            'change_note'  => ['nullable', 'string', 'max:2000'],
-            'signed_by'    => ['nullable', 'string', 'max:191'],
-            'signed_at'    => ['nullable', 'date'],
+            'change_note' => ['nullable', 'string', 'max:2000'],
+            'signed_by'   => ['nullable', 'string', 'max:191'],
+            'signed_at'   => ['nullable', 'date'],
         ]);
 
         $filePath = $version->file_path;
@@ -138,8 +132,8 @@ class DocumentVersionController extends Controller
                 Storage::disk('local')->delete($version->file_path);
             }
 
-            $file     = $request->file('file');
-            $folder   = 'documents/' . ($version->document->doc_code ?: 'misc');
+            $file   = $request->file('file');
+            $folder = 'documents/' . ($version->document->doc_code ?: 'misc');
 
             $original = pathinfo($file->getClientOriginalName(), PATHINFO_FILENAME);
             $ext      = $file->getClientOriginalExtension();
@@ -150,9 +144,8 @@ class DocumentVersionController extends Controller
             $checksum = hash_file('sha256', $file->getRealPath());
         }
 
-        $version->version_label = $request->string('version_label');
+        $version->version_label = (string) $request->string('version_label');
 
-        // hanya set field jika dikirim (supaya bisa tetap pakai nilai lama)
         if ($request->has('change_note')) {
             $version->change_note = $request->input('change_note');
         }
@@ -162,11 +155,12 @@ class DocumentVersionController extends Controller
         if ($request->has('signed_at')) {
             $version->signed_at = $request->filled('signed_at')
                 ? Carbon::parse($request->input('signed_at'))
-                : null; // bisa clear
+                : null;
         }
         if ($request->has('pasted_text')) {
-            $version->plain_text  = $request->input('pasted_text') ?: null;
-            $version->pasted_text = $request->input('pasted_text') ?: null;
+            $text = $request->input('pasted_text') ?: null;
+            $version->plain_text  = $text;
+            $version->pasted_text = $text;
         }
 
         $version->file_path = $filePath;
@@ -181,14 +175,14 @@ class DocumentVersionController extends Controller
     }
 
     /**
-     * Show a single document version (detail)
+     * Detail satu versi
      */
     public function show(DocumentVersion $version)
     {
-        // eager load relasi
+        // eager load relasi penting
         $version->load(['document.department', 'creator']);
 
-        // versi lain dari dokumen yang sama (untuk sidebar/list)
+        // versi lain dari dokumen yang sama (sidebar/list)
         $otherVersions = DocumentVersion::where('document_id', $version->document_id)
             ->orderByDesc('id')
             ->get();
@@ -198,5 +192,37 @@ class DocumentVersionController extends Controller
             'document'      => $version->document,
             'otherVersions' => $otherVersions,
         ]);
+    }
+
+    /**
+     * Submit versi untuk approval (KABAG -> MR)
+     * Route name yang diharapkan: versions.submit
+     */
+    public function submitForApproval($id)
+    {
+        $user = Auth::user();
+
+        // Hanya kabag/admin yang boleh submit ke MR
+        if (! $user || ! method_exists($user, 'hasAnyRole') || ! $user->hasAnyRole(['kabag', 'admin'])) {
+            return back()->with('error', 'Anda tidak memiliki izin untuk mengirimkan versi ini.');
+        }
+
+        $version = DocumentVersion::with('document')->findOrFail($id);
+
+        // Cegah submit ulang versi final
+        if (in_array($version->status, ['approved', 'rejected', 'superseded'], true)) {
+            return back()->with('warning', 'Versi ini sudah final dan tidak dapat dikirim.');
+        }
+
+        // Set status & stage ke MR
+        $version->status = 'submitted';
+        $version->approval_stage = 'MR';
+        // opsional: kapan dikirim
+        if (property_exists($version, 'submitted_at')) {
+            $version->submitted_at = now();
+        }
+        $version->save();
+
+        return back()->with('success', 'Dokumen telah dikirim ke MR untuk persetujuan.');
     }
 }

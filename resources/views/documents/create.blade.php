@@ -1,25 +1,21 @@
 @extends('layouts.iso')
 
 @section('content')
-<div style="max-width:900px;margin:0 auto;">
-  <h2 style="margin-top:0">Upload Signed PDF</h2>
+<div class="container-narrow">
+  <h2>New Document (Upload baseline)</h2>
 
+  {{-- Flash --}}
   @if(session('success'))
-    <div style="padding:10px;background:#ecfdf5;border:1px solid #d1fae5;margin-bottom:12px;border-radius:8px;color:#065f46;">
-      {{ session('success') }}
-    </div>
+    <div class="alert alert-success">{{ session('success') }}</div>
   @endif
-
   @if(session('error'))
-    <div style="padding:10px;background:#fee2e2;border:1px solid #fca5a5;margin-bottom:12px;border-radius:8px;color:#7f1d1d;">
-      {{ session('error') }}
-    </div>
+    <div class="alert alert-danger">{{ session('error') }}</div>
   @endif
 
-  {{-- Tampilkan error validasi --}}
+  {{-- Error global --}}
   @if ($errors->any())
-    <div style="padding:10px;background:#fff7ed;border:1px solid #fdba74;margin-bottom:12px;border-radius:8px;color:#9a3412;">
-      <ul style="margin:0;padding-left:18px;">
+    <div class="alert alert-warn">
+      <ul class="mb-0 ps-3">
         @foreach ($errors->all() as $error)
           <li>{{ $error }}</li>
         @endforeach
@@ -27,75 +23,100 @@
     </div>
   @endif
 
-  <form method="post" action="{{ route('documents.uploadPdf') }}" enctype="multipart/form-data">
+  <form method="post" action="{{ route('documents.store') }}" enctype="multipart/form-data" novalidate>
     @csrf
 
+    {{-- Category --}}
     <div class="form-row">
-      <label>Document code (optional)</label>
-      <input class="form-input" type="text" name="doc_code" value="{{ old('doc_code', $doc->doc_code ?? '') }}">
+      <label for="category">Category <span class="req">*</span></label>
+      <select id="category" name="category" class="form-input" required>
+        @php
+          $cats = [
+            'IK' => 'IK - Instruksi Kerja',
+            'UT' => 'UT - Uraian Tugas',
+            'FR' => 'FR - Formulir',
+            'PJM'=> 'PJM - Prosedur Jaminan Mutu',
+            'MJM'=> 'MJM - Manual Jaminan Mutu',
+            'DP' => 'DP - Dokumen Pendukung',
+            'DE' => 'DE - Dokumen Eksternal',
+          ];
+        @endphp
+        @foreach($cats as $val => $label)
+          <option value="{{ $val }}" @selected(old('category')===$val)>{{ $label }}</option>
+        @endforeach
+      </select>
+      @error('category') <div class="field-error">{{ $message }}</div> @enderror
     </div>
 
+    {{-- Department --}}
     <div class="form-row">
-      <label>Title</label>
-      <input class="form-input" type="text" name="title" value="{{ old('title', $doc->title ?? '') }}" required>
+      <label for="department_id">Department <span class="req">*</span></label>
+      <select id="department_id" name="department_id" class="form-input" required>
+        @foreach($departments as $dep)
+          <option value="{{ $dep->id }}"
+            @selected( (string)old('department_id', auth()->user()->department_id ?? '') === (string)$dep->id )>
+            {{ $dep->code }} — {{ $dep->name }}
+          </option>
+        @endforeach
+      </select>
+      @error('department_id') <div class="field-error">{{ $message }}</div> @enderror
     </div>
 
-    <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
-      <div style="flex:1;min-width:240px;">
-        <label>Department</label>
-        <select class="form-input" name="department_id" required>
-          <option value="">-- pilih --</option>
-          @foreach($departments as $dept)
-            <option value="{{ $dept->id }}" {{ (string)old('department_id') === (string)$dept->id ? 'selected' : '' }}>
-              {{ $dept->code }} — {{ $dept->name }}
-            </option>
-          @endforeach
-        </select>
+    {{-- Doc code --}}
+    <div class="form-row">
+      <label for="doc_code">Document code (optional)</label>
+      <input id="doc_code" type="text" name="doc_code" class="form-input"
+             value="{{ old('doc_code') }}" placeholder="IK.QA-FL.001 (optional)">
+      @error('doc_code') <div class="field-error">{{ $message }}</div> @enderror
+    </div>
+
+    {{-- Title --}}
+    <div class="form-row">
+      <label for="title">Title <span class="req">*</span></label>
+      <input id="title" type="text" name="title" class="form-input" value="{{ old('title') }}" required>
+      @error('title') <div class="field-error">{{ $message }}</div> @enderror
+    </div>
+
+    {{-- File --}}
+    <div class="form-row">
+      <label for="file">Upload PDF or DOCX (optional)</label>
+      <input id="file" type="file" name="file" class="form-input" accept=".pdf,.doc,.docx">
+      <div class="small-muted">Maks 50MB. Bisa dikosongkan bila hanya ingin tempel teks.</div>
+      @error('file') <div class="field-error">{{ $message }}</div> @enderror
+    </div>
+
+    {{-- Pasted text --}}
+    <div class="form-row">
+      <label for="pasted_text">Paste text content (optional, untuk search)</label>
+      <textarea id="pasted_text" name="pasted_text" rows="8" class="form-textarea">{{ old('pasted_text') }}</textarea>
+      @error('pasted_text') <div class="field-error">{{ $message }}</div> @enderror
+    </div>
+
+    {{-- Version label --}}
+    <div class="form-row">
+      <label for="version_label">Version label (default v1)</label>
+      <input id="version_label" type="text" name="version_label" value="{{ old('version_label','v1') }}" class="form-input">
+      @error('version_label') <div class="field-error">{{ $message }}</div> @enderror
+    </div>
+
+    {{-- Version & approved dates (opsional, untuk histori) --}}
+    <div class="row-flex gap">
+      <div class="col">
+        <label for="created_at">Version date (optional)</label>
+        <input id="created_at" type="date" name="created_at" value="{{ old('created_at') }}" class="form-input">
+        @error('created_at') <div class="field-error">{{ $message }}</div> @enderror
       </div>
-
-      <div style="width:180px;min-width:160px;">
-        <label>Version label</label>
-        <input class="form-input" type="text" name="version_label" value="{{ old('version_label','v1') }}" required>
+      <div class="col">
+        <label for="approved_at">Approved date (optional)</label>
+        <input id="approved_at" type="date" name="approved_at" value="{{ old('approved_at') }}" class="form-input">
+        @error('approved_at') <div class="field-error">{{ $message }}</div> @enderror
       </div>
     </div>
 
-    <div class="form-row" style="display:flex;gap:12px;flex-wrap:wrap;">
-      <div style="flex:1;min-width:240px;">
-        <label>Signed by (Kabag)</label>
-        <input class="form-input" type="text" name="signed_by" value="{{ old('signed_by') }}">
-      </div>
-      <div style="width:200px;min-width:180px;">
-        <label>Signed at (date)</label>
-        <input class="form-input" type="date" name="signed_at" value="{{ old('signed_at') }}">
-      </div>
-    </div>
-
-    <div class="form-row">
-      <label>Change note</label>
-      <textarea class="form-textarea" name="change_note" rows="3">{{ old('change_note') }}</textarea>
-    </div>
-
-    <div class="form-row">
-      <label>Master file (Word or Excel) — optional</label>
-      <input class="form-input" type="file" name="master_file" accept=".doc,.docx,.xls,.xlsx">
-      <div class="small-muted">Upload editable master (docx/xlsx) if available.</div>
-    </div>
-
-    <div class="form-row">
-      <label>Signed PDF file (for download)</label>
-      <input class="form-input" type="file" name="file" accept="application/pdf">
-      <div class="small-muted">Signed PDF will be stored for user download.</div>
-    </div>
-
-    <div class="form-row">
-      <label>Paste document text (optional) — overrides extraction</label>
-      <textarea class="form-textarea" name="pasted_text" rows="8" placeholder="Paste the document text here…">{{ old('pasted_text') }}</textarea>
-      <div class="small-muted">If provided, this text will be used for indexing and diffs.</div>
-    </div>
-
-    <div style="margin-top:12px;display:flex;gap:10px;flex-wrap:wrap;">
-      <button type="submit" class="btn">Upload PDF</button>
-      <a href="{{ route('documents.index') }}" class="btn-muted">Back</a>
+    {{-- Actions --}}
+    <div class="actions">
+      <button class="btn" type="submit">Save baseline (v1) & Publish</button>
+      <a href="{{ route('documents.index') }}" class="btn-muted">Cancel</a>
     </div>
   </form>
 </div>

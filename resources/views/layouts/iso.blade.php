@@ -5,6 +5,17 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>ISO Library</title>
   <link rel="stylesheet" href="{{ asset('css/style.css') }}">
+  <style>
+  .card { border-radius:12px; box-shadow: 0 6px 18px rgba(20,40,70,0.05); }
+  .table thead th { background: #f8fafc; border-bottom: 1px solid #e6eef6; }
+  .btn { border-radius: 8px; padding: .45rem .75rem; }
+  .btn-sm { padding: .25rem .6rem; font-size: .85rem; }
+  .table td, .table th { vertical-align: middle; }
+  /* approval page specific spacing */
+  .approval-actions .btn { margin-right:6px; }
+  /* modal input */
+  #rejectNotes { min-height: 120px; }
+</style>
 </head>
 
 <body>
