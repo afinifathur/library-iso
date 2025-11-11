@@ -6,8 +6,9 @@
   <title>ISO Library</title>
   <link rel="stylesheet" href="{{ asset('css/style.css') }}">
 </head>
+
 <body>
-  <div class="container">
+  <div class="app-container">
 
     {{-- Top navbar --}}
     <header class="site-header">
@@ -29,10 +30,10 @@
         <a href="{{ route('audit.index') }}" class="{{ request()->routeIs('audit*') ? 'active' : '' }}">Audit Log</a>
 
         @auth
-          <form method="POST" action="{{ route('logout') }}" style="display:inline;margin-left:12px;">
-            @csrf
-            <button type="submit" class="btn-muted">Logout</button>
-          </form>
+        <form method="POST" action="{{ route('logout') }}" style="display:inline;margin-left:12px;">
+          @csrf
+          <button type="submit" class="btn-muted">Logout</button>
+        </form>
         @endauth
       </nav>
     </header>
@@ -42,8 +43,9 @@
         @yield('content')
       </div>
 
-      <div class="footer-small">&copy; {{ date('Y') }} ISO Library — built for offline/lan use</div>
+      <div class="footer-small">&copy; {{ date('Y') }} ISO Library — built for offline/LAN use</div>
     </main>
+
   </div>
 </body>
 </html>

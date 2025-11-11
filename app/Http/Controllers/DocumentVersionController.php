@@ -2,124 +2,201 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Document;
+use App\Models\DocumentVersion;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
-use App\Models\DocumentVersion;
-use App\Models\Document;
-use App\Models\AuditLog;
+use Illuminate\Support\Str;
 
 class DocumentVersionController extends Controller
 {
     /**
-     * Download a document version file from "documents" disk.
+     * Tampilkan form create (opsional ?document_id=)
      */
-    public function download($versionId)
+    public function create(Request $request)
     {
-        $version = DocumentVersion::findOrFail($versionId);
+        $document = null;
 
-        $disk = Storage::disk('documents');
-        if (! $disk->exists($version->file_path)) {
-            abort(404, 'File not found');
+        if ($request->filled('document_id')) {
+            $document = Document::find($request->query('document_id'));
         }
 
-        // Optional: gunakan nama file asli dari path
-        $downloadName = basename($version->file_path);
-
-        return $disk->download($version->file_path, $downloadName);
+        return view('versions.create', compact('document'));
     }
 
     /**
-     * Approve version (allowed roles: mr, admin, kabag).
+     * Simpan versi baru
      */
-    public function approve(Request $request, $versionId)
+    public function store(Request $request)
     {
-        $user = $request->user();
-        if (! $user) {
-            abort(401, 'Unauthenticated');
-        }
-
-        $version = DocumentVersion::findOrFail($versionId);
-
-        // authorization
-        if (! $user->hasAnyRole(['mr', 'admin', 'kabag'])) {
-            abort(403, 'Unauthorized');
-        }
-
-        // update version
-        $version->status       = 'approved';
-        $version->reviewed_at  = now();
-        $version->reviewed_by  = $user->id;
-        $version->review_comment = $request->input('comment'); // opsional
-        $version->save();
-
-        // update parent document as current approved revision
-        $doc = $version->document;
-        if ($doc instanceof Document) {
-            $doc->revision_number   = max(1, (int)($doc->revision_number ?? 0) + 1);
-            $doc->revision_date     = now();
-            if (property_exists($doc, 'current_version_id') || $doc->isFillable('current_version_id')) {
-                $doc->current_version_id = $version->id;
-            }
-            $doc->save();
-        }
-
-        // audit log
-        AuditLog::create([
-            'event'                => 'approve_version',
-            'user_id'              => $user->id,
-            'document_id'          => $version->document_id,
-            'document_version_id'  => $version->id,
-            'detail'               => json_encode([
-                'message' => 'Version approved',
-                'comment' => $request->input('comment'),
-            ]),
-            'ip'                   => $request->ip(),
-        ]);
-
-        return back()->with('success', 'Version approved.');
-    }
-
-    /**
-     * Reject version (allowed roles: mr, admin, kabag).
-     */
-    public function reject(Request $request, $versionId)
-    {
-        $user = $request->user();
-        if (! $user) {
-            abort(401, 'Unauthenticated');
-        }
-
-        $version = DocumentVersion::findOrFail($versionId);
-
-        // authorization
-        if (! $user->hasAnyRole(['mr', 'admin', 'kabag'])) {
-            abort(403, 'Unauthorized');
-        }
-
-        // require a comment for rejection
         $request->validate([
-            'comment' => 'required|string|max:2000',
+            'document_id'   => ['required', 'integer', 'exists:documents,id'],
+            'version_label' => ['required', 'string', 'max:50'],
+
+            // wajib salah satu: file atau pasted_text
+            'file'         => ['required_without:pasted_text', 'nullable', 'file', 'mimes:pdf,doc,docx', 'max:51200'],
+            'pasted_text'  => ['required_without:file', 'nullable', 'string', 'max:500000'],
+
+            'change_note'  => ['nullable', 'string', 'max:2000'],
+            'signed_by'    => ['nullable', 'string', 'max:191'],
+            'signed_at'    => ['nullable', 'date'],
         ]);
 
-        $version->status         = 'rejected';
-        $version->review_comment = $request->input('comment');
-        $version->reviewed_at    = now();
-        $version->reviewed_by    = $user->id;
+        $document = Document::findOrFail($request->input('document_id'));
+        $userId   = optional($request->user())->id;
+
+        $filePath = null;
+        $fileMime = null;
+        $checksum = null;
+
+        if ($request->hasFile('file')) {
+            $file     = $request->file('file');
+
+            // folder berdasarkan doc_code (fallback "misc")
+            $folder   = 'documents/' . ($document->doc_code ?: 'misc');
+
+            // filename aman
+            $original = pathinfo($file->getClientOriginalName(), PATHINFO_FILENAME);
+            $ext      = $file->getClientOriginalExtension();
+            $safeName = time() . '_' . Str::random(6) . '_' . Str::slug($original, '_') . ($ext ? ".{$ext}" : '');
+
+            // simpan file ke disk local
+            $filePath = $file->storeAs($folder, $safeName, 'local');
+
+            // meta
+            $fileMime = $file->getMimeType(); // server-side mime
+            $checksum = hash_file('sha256', $file->getRealPath());
+        }
+
+        $version = new DocumentVersion();
+        $version->document_id    = $document->id;
+        $version->version_label  = $request->string('version_label');
+        $version->status         = 'draft';
+        $version->created_by     = $userId;
+
+        $version->file_path      = $filePath;
+        $version->file_mime      = $fileMime;
+        $version->checksum       = $checksum;
+
+        $version->change_note    = $request->input('change_note');
+        $version->signed_by      = $request->input('signed_by');
+        $version->signed_at      = $request->filled('signed_at')
+            ? Carbon::parse($request->input('signed_at'))
+            : null;
+
+        // simpan teks jika ada (plain_text & pasted_text disamakan)
+        if ($request->filled('pasted_text')) {
+            $version->plain_text  = $request->input('pasted_text');
+            $version->pasted_text = $request->input('pasted_text');
+        }
+
+        // default stage bisnis
+        $version->approval_stage = 'KABAG';
         $version->save();
 
-        // audit log
-        AuditLog::create([
-            'event'                => 'reject_version',
-            'user_id'              => $user->id,
-            'document_id'          => $version->document_id,
-            'document_version_id'  => $version->id,
-            'detail'               => json_encode([
-                'message' => 'Version rejected',
-                'comment' => $request->input('comment'),
-            ]),
-            'ip'                   => $request->ip(),
+        // gunakan halaman detail versi yang baru dibuat
+        return redirect()
+            ->route('versions.show', $version)
+            ->with('success', 'Version created (draft). You can Submit for Approval when ready.');
+    }
+
+    /**
+     * Tampilkan form edit
+     */
+    public function edit(DocumentVersion $version)
+    {
+        $document = $version->document;
+
+        return view('versions.edit', compact('version', 'document'));
+    }
+
+    /**
+     * Update versi (boleh ganti file, teks, catatan)
+     */
+    public function update(Request $request, DocumentVersion $version)
+    {
+        $request->validate([
+            'version_label' => ['required', 'string', 'max:50'],
+
+            // update file opsional; kalau tidak upload file baru, file lama dipertahankan
+            'file'         => ['nullable', 'file', 'mimes:pdf,doc,docx', 'max:51200'],
+            'pasted_text'  => ['nullable', 'string', 'max:500000'],
+
+            'change_note'  => ['nullable', 'string', 'max:2000'],
+            'signed_by'    => ['nullable', 'string', 'max:191'],
+            'signed_at'    => ['nullable', 'date'],
         ]);
 
-        return back()->with('success', 'Version rejected and comment saved.');
+        $filePath = $version->file_path;
+        $fileMime = $version->file_mime;
+        $checksum = $version->checksum;
+
+        if ($request->hasFile('file')) {
+            // hapus file lama jika ada
+            if ($version->file_path && Storage::disk('local')->exists($version->file_path)) {
+                Storage::disk('local')->delete($version->file_path);
+            }
+
+            $file     = $request->file('file');
+            $folder   = 'documents/' . ($version->document->doc_code ?: 'misc');
+
+            $original = pathinfo($file->getClientOriginalName(), PATHINFO_FILENAME);
+            $ext      = $file->getClientOriginalExtension();
+            $safeName = time() . '_' . Str::random(6) . '_' . Str::slug($original, '_') . ($ext ? ".{$ext}" : '');
+
+            $filePath = $file->storeAs($folder, $safeName, 'local');
+            $fileMime = $file->getMimeType();
+            $checksum = hash_file('sha256', $file->getRealPath());
+        }
+
+        $version->version_label = $request->string('version_label');
+
+        // hanya set field jika dikirim (supaya bisa tetap pakai nilai lama)
+        if ($request->has('change_note')) {
+            $version->change_note = $request->input('change_note');
+        }
+        if ($request->has('signed_by')) {
+            $version->signed_by = $request->input('signed_by');
+        }
+        if ($request->has('signed_at')) {
+            $version->signed_at = $request->filled('signed_at')
+                ? Carbon::parse($request->input('signed_at'))
+                : null; // bisa clear
+        }
+        if ($request->has('pasted_text')) {
+            $version->plain_text  = $request->input('pasted_text') ?: null;
+            $version->pasted_text = $request->input('pasted_text') ?: null;
+        }
+
+        $version->file_path = $filePath;
+        $version->file_mime = $fileMime;
+        $version->checksum  = $checksum;
+
+        $version->save();
+
+        return redirect()
+            ->route('versions.show', $version)
+            ->with('success', 'Version updated.');
+    }
+
+    /**
+     * Show a single document version (detail)
+     */
+    public function show(DocumentVersion $version)
+    {
+        // eager load relasi
+        $version->load(['document.department', 'creator']);
+
+        // versi lain dari dokumen yang sama (untuk sidebar/list)
+        $otherVersions = DocumentVersion::where('document_id', $version->document_id)
+            ->orderByDesc('id')
+            ->get();
+
+        return view('versions.show', [
+            'version'       => $version,
+            'document'      => $version->document,
+            'otherVersions' => $otherVersions,
+        ]);
     }
 }

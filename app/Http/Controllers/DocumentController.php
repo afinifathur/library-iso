@@ -2,13 +2,14 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Department;
+use App\Models\Document;
+use App\Models\DocumentVersion;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
-use App\Models\Document;
-use App\Models\DocumentVersion;
-use App\Models\Department;
-// Opsional (aktif jika paket terpasang): composer require jfcherng/php-diff
+use Illuminate\Validation\Rule;
+// Opsional: composer require jfcherng/php-diff
 use Jfcherng\Diff\DiffHelper;
 
 class DocumentController extends Controller
@@ -17,32 +18,27 @@ class DocumentController extends Controller
     {
         $departments = Department::orderBy('code')->get();
 
-        $q = Document::with(['department', 'currentVersion']);
-
-        // Filter by department (code atau id)
-        if ($request->filled('department')) {
-            $dept = $request->input('department');
-            $q->whereHas('department', function ($qb) use ($dept) {
-                $qb->where('code', $dept)->orWhere('id', $dept);
-            });
-        }
-
-        // Search: doc_code, title, dan text versi (plain_text / pasted_text)
-        if ($request->filled('search')) {
-            $s = $request->input('search');
-            $q->where(function ($qq) use ($s) {
-                $qq->where('doc_code', 'like', "%{$s}%")
-                   ->orWhere('title', 'like', "%{$s}%")
-                   ->orWhereHas('versions', function ($qv) use ($s) {
-                       $qv->where('plain_text', 'like', "%{$s}%")
-                          ->orWhere('pasted_text', 'like', "%{$s}%");
-                   });
-            });
-        }
-
-        $docs = $q->orderBy('doc_code')
-                  ->paginate(25)
-                  ->appends($request->query());
+        $docs = Document::with(['department', 'currentVersion'])
+            ->when($request->filled('department'), function ($q) use ($request) {
+                $dept = $request->input('department');
+                $q->whereHas('department', function ($qb) use ($dept) {
+                    $qb->where('code', $dept)->orWhere('id', $dept);
+                });
+            })
+            ->when($request->filled('search'), function ($q) use ($request) {
+                $s = $request->input('search');
+                $q->where(function ($qq) use ($s) {
+                    $qq->where('doc_code', 'like', "%{$s}%")
+                       ->orWhere('title', 'like', "%{$s}%")
+                       ->orWhereHas('versions', function ($qv) use ($s) {
+                           $qv->where('plain_text', 'like', "%{$s}%")
+                              ->orWhere('pasted_text', 'like', "%{$s}%");
+                       });
+                });
+            })
+            ->orderBy('doc_code')
+            ->paginate(25)
+            ->appends($request->query());
 
         return view('documents.index', compact('docs', 'departments'));
     }
@@ -54,34 +50,54 @@ class DocumentController extends Controller
     }
 
     /**
-     * Upload version:
-     * Prioritas teks: pasted_text -> master (docx/xlsx) -> PDF
+     * Form edit info dokumen.
+     */
+    public function edit($id)
+    {
+        $document    = Document::findOrFail($id);
+        $departments = Department::orderBy('code')->get();
+
+        return view('documents.edit', compact('document', 'departments'));
+    }
+
+    /**
+     * Update info dokumen.
+     */
+    public function update(Request $request, $id)
+    {
+        $document = Document::findOrFail($id);
+
+        $validated = $request->validate([
+            'title'         => 'required|string|max:255',
+            'doc_code'      => [
+                'required',
+                'string',
+                'max:50',
+                Rule::unique('documents', 'doc_code')->ignore($document->id),
+            ],
+            'department_id' => ['required', 'integer', 'exists:departments,id'],
+        ]);
+
+        $document->update($validated);
+
+        return redirect()
+            ->route('documents.show', $document->id)
+            ->with('success', 'Document info updated.');
+    }
+
+    /**
+     * Upload versi.
+     * Prioritas teks: pasted_text -> master (docx) -> PDF.
      */
     public function uploadPdf(Request $request)
     {
-        // ==== PATCH: Auth & Role Check (aman, tanpa ketergantungan middleware) ====
         $user = $request->user();
         if (! $user) {
             return redirect()->route('login')->with('error', 'Login required to upload documents.');
         }
-        // Jika User pakai Spatie\Permission\HasRoles
-        if (method_exists($user, 'hasAnyRole')) {
-            if (! $user->hasAnyRole(['mr', 'admin', 'kabag'])) {
-                abort(403, 'Anda tidak memiliki hak untuk mengunggah dokumen.');
-            }
-        } else {
-            // Fallback aman jika relasi roles ada tapi tanpa trait
-            try {
-                $roles = method_exists($user, 'roles') ? $user->roles()->pluck('name')->toArray() : [];
-                if (! array_intersect($roles, ['mr', 'admin', 'kabag'])) {
-                    abort(403, 'Anda tidak memiliki hak untuk mengunggah dokumen.');
-                }
-            } catch (\Throwable $e) {
-                // Jika tidak ada sistem role sama sekali, default tolak (lebih aman)
-                abort(403, 'Role check failed; contact admin.');
-            }
+        if (! $this->userCanUpload($user)) {
+            abort(403, 'Anda tidak memiliki hak untuk mengunggah dokumen.');
         }
-        // ==== END PATCH ====
 
         $request->validate([
             'file'           => 'nullable|file|mimes:pdf|max:51200',
@@ -97,30 +113,29 @@ class DocumentController extends Controller
             'pasted_text'    => 'nullable|string|max:200000',
         ]);
 
-        // Find or create document
+        // Find / create document
         if ($request->filled('document_id')) {
             $document = Document::findOrFail($request->input('document_id'));
         } else {
-            $docCode = $request->input('doc_code') ?: strtoupper(Str::slug($request->input('title'), '-'));
+            $docCode  = $request->input('doc_code') ?: strtoupper(Str::slug($request->input('title'), '-'));
             $document = Document::firstOrCreate(
                 ['doc_code' => $docCode],
                 ['title' => $request->input('title'), 'department_id' => $request->input('department_id')]
             );
         }
 
-        $disk = Storage::disk('documents'); // pastikan disk 'documents' terkonfigurasi
+        $disk = Storage::disk('documents');
 
-        // Simpan master (opsional)
+        // Save master (optional)
         $master_path = null;
         if ($request->hasFile('master_file')) {
             $master      = $request->file('master_file');
             $master_name = time().'_master_'.Str::random(6).'_'.$master->getClientOriginalName();
             $master_path = $document->doc_code.'/master/'.$master_name;
             $disk->put($master_path, file_get_contents($master->getRealPath()));
-            // opsional: $document->master_path = $master_path; $document->save();
         }
 
-        // Simpan signed PDF (opsional)
+        // Save PDF (optional)
         $file_path = null;
         $file_mime = null;
         $checksum  = null;
@@ -134,7 +149,7 @@ class DocumentController extends Controller
             $checksum  = hash('sha256', $content);
         }
 
-        // Buat versi
+        // Create version
         $version = DocumentVersion::create([
             'document_id'   => $document->id,
             'version_label' => $request->input('version_label'),
@@ -148,10 +163,7 @@ class DocumentController extends Controller
             'signed_at'     => $request->input('signed_at') ?: null,
         ]);
 
-        // ==== Prioritas teks ====
-        $extracted = null;
-
-        // 1) pasted_text
+        // Text priority
         if ($request->filled('pasted_text')) {
             $pasted = $this->normalizeText($request->input('pasted_text'));
             $version->pasted_text     = $pasted;
@@ -159,41 +171,14 @@ class DocumentController extends Controller
             $version->summary_changed = 'Text provided by uploader (pasted).';
             $version->save();
         } else {
-            // 2) dari master (DOCX basic unzip)
-            if ($master_path && $disk->exists($master_path) && Str::endsWith(strtolower($master_path), '.docx')) {
-                try {
-                    $tmp = sys_get_temp_dir().DIRECTORY_SEPARATOR.'master_'.$version->id.'.docx';
-                    file_put_contents($tmp, $disk->get($master_path));
+            $extracted = null;
 
-                    $zip = new \ZipArchive;
-                    if ($zip->open($tmp) === true) {
-                        $idx = $zip->locateName('word/document.xml');
-                        if ($idx !== false) {
-                            $data = $zip->getFromIndex($idx);
-                            $zip->close();
-                            $extracted = $this->normalizeText(strip_tags($data));
-                        } else {
-                            $zip->close();
-                        }
-                    }
-                    @unlink($tmp);
-                } catch (\Throwable $e) {
-                    $extracted = null; // lanjut ke PDF
-                }
+            if (! $extracted && $master_path && $disk->exists($master_path) && Str::endsWith(strtolower($master_path), '.docx')) {
+                $extracted = $this->extractDocxText($disk->get($master_path));
             }
 
-            // 3) dari PDF (jika ada)
-            if (!$extracted && $version->file_path && $disk->exists($version->file_path)) {
-                try {
-                    // gunakan service/command internal bila tersedia
-                    $extractor = app()->make(\App\Console\Commands\ExtractDocumentTextCommand::class);
-                    $text = $extractor->extractTextForVersion($version, env('PDFTOTEXT_PATH', 'pdftotext'));
-                    if ($text) {
-                        $extracted = $this->normalizeText($text);
-                    }
-                } catch (\Throwable $e) {
-                    $extracted = null;
-                }
+            if (! $extracted && $version->file_path && $disk->exists($version->file_path)) {
+                $extracted = $this->extractPdfText($version);
             }
 
             if ($extracted) {
@@ -205,14 +190,14 @@ class DocumentController extends Controller
             $version->save();
         }
 
-        // Update metadata dokumen
+        // Update document meta
         $document->revision_number = max(1, (int)($document->revision_number ?? 0) + 1);
         $document->revision_date   = now();
         $document->title           = $request->input('title');
         $document->department_id   = $request->input('department_id');
         $document->save();
 
-        // Audit (opsional)
+        // Optional audit
         if (class_exists(\App\Models\AuditLog::class)) {
             \App\Models\AuditLog::create([
                 'event'               => 'upload_version',
@@ -234,8 +219,7 @@ class DocumentController extends Controller
     }
 
     /**
-     * Compare dua versi dokumen.
-     * Jika v1/v2 tidak diberikan, otomatis ambil 2 versi terakhir.
+     * Compare dua versi. Jika kosong, ambil 2 terbaru.
      */
     public function compare(Request $request, $documentId)
     {
@@ -244,7 +228,7 @@ class DocumentController extends Controller
         $v1 = $request->query('v1');
         $v2 = $request->query('v2');
 
-        if (!$v1 || !$v2) {
+        if (! $v1 || ! $v2) {
             $versions = $doc->versions()->orderByDesc('id')->take(2)->get();
             if ($versions->count() < 2) {
                 return back()->with('error', 'Dokumen ini belum punya 2 versi untuk dibandingkan.');
@@ -259,13 +243,91 @@ class DocumentController extends Controller
         $text1 = $ver1->plain_text ?: ($ver1->pasted_text ?: '(Tidak ada teks)');
         $text2 = $ver2->plain_text ?: ($ver2->pasted_text ?: '(Tidak ada teks)');
 
-        // Generate diff (pakai jfcherng/php-diff jika tersedia)
-        $diff = null;
+        $diff = $this->buildDiff($text1, $text2);
+
+        return view('documents.compare', compact('doc', 'ver1', 'ver2', 'diff'));
+    }
+
+    /**
+     * Detail dokumen + versi.
+     */
+    public function show($id)
+    {
+        $document = Document::with([
+            'versions' => fn ($q) => $q->orderByDesc('id'),
+            'department',
+        ])->findOrFail($id);
+
+        $versions = $document->versions;
+        $version  = $versions->first(); // boleh null
+        $doc      = $document;          // alias untuk view lama
+
+        return view('documents.show', compact('document', 'versions', 'version', 'doc'));
+    }
+
+    /* =========================
+     * Helpers
+     * ========================= */
+
+    protected function userCanUpload($user): bool
+    {
+        if (method_exists($user, 'hasAnyRole')) {
+            return $user->hasAnyRole(['mr', 'admin', 'kabag']);
+        }
+
+        try {
+            $roles = method_exists($user, 'roles') ? $user->roles()->pluck('name')->toArray() : [];
+            return (bool) array_intersect($roles, ['mr', 'admin', 'kabag']);
+        } catch (\Throwable) {
+            return false;
+        }
+    }
+
+    protected function extractDocxText(string $binary): ?string
+    {
+        try {
+            $tmp = sys_get_temp_dir().DIRECTORY_SEPARATOR.'docx_'.uniqid().'.docx';
+            file_put_contents($tmp, $binary);
+
+            $zip  = new \ZipArchive;
+            $text = null;
+
+            if ($zip->open($tmp) === true) {
+                $idx = $zip->locateName('word/document.xml');
+                if ($idx !== false) {
+                    $xml  = $zip->getFromIndex($idx);
+                    $zip->close();
+                    $text = strip_tags($xml);
+                } else {
+                    $zip->close();
+                }
+            }
+
+            @unlink($tmp);
+            return $text ? $this->normalizeText($text) : null;
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
+    protected function extractPdfText(DocumentVersion $version): ?string
+    {
+        try {
+            $extractor = app()->make(\App\Console\Commands\ExtractDocumentTextCommand::class);
+            $text = $extractor->extractTextForVersion($version, env('PDFTOTEXT_PATH', 'pdftotext'));
+            return $text ? $this->normalizeText($text) : null;
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
+    protected function buildDiff(string $text1, string $text2): string
+    {
         if (class_exists(DiffHelper::class)) {
             $diffOptions = [
-                'context'           => 2,
-                'ignoreWhitespace'  => true,
-                'ignoreCase'        => false,
+                'context'          => 2,
+                'ignoreWhitespace' => true,
+                'ignoreCase'       => false,
             ];
             $rendererOptions = [
                 'detailLevel'       => 'line',
@@ -275,36 +337,19 @@ class DocumentController extends Controller
                 'outputTagAsString' => false,
             ];
 
-            $diff = DiffHelper::calculate(
+            return DiffHelper::calculate(
                 $text1,
                 $text2,
                 'Combined',
                 $diffOptions,
                 $rendererOptions
             );
-        } else {
-            // Fallback bila library belum terpasang
-            $diff = '<div style="color:#b45309;background:#fffbeb;border:1px solid #fde68a;padding:8px;border-radius:6px;">
-                        Diff library not installed. Run: <code>composer require jfcherng/php-diff</code>
-                     </div>';
         }
 
-        return view('documents.compare', [
-            'doc'  => $doc,
-            'ver1' => $ver1,
-            'ver2' => $ver2,
-            'diff' => $diff,
-        ]);
+        return '<div class="alert alert-warning mb-0">Diff library not installed. Run: <code>composer require jfcherng/php-diff</code></div>';
     }
 
-    public function show($id)
-    {
-        $doc = Document::with(['versions', 'department'])->findOrFail($id);
-        return view('documents.show', compact('doc'));
-    }
-
-    // Helper
-    protected function normalizeText($text)
+    protected function normalizeText(string $text): string
     {
         $text = str_replace(["\r\n", "\r"], "\n", $text);
         $text = preg_replace('/[^\PC\n\t]/u', ' ', $text);

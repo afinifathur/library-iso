@@ -1,130 +1,152 @@
 @extends('layouts.iso')
 
+@section('title', $document->title)
+
 @section('content')
-<h2 style="margin-top:0">
-  {{ $doc->doc_code }} — {{ $doc->title }}
-</h2>
+<div class="container" style="max-width:1000px;">
+    
+    {{-- HEADER --}}
+    <h2 class="mb-1">{{ $document->doc_code }} — {{ $document->title }}</h2>
+    <p class="text-muted mb-3">
+        Department: {{ $document->department->name ?? '-' }}
+    </p>
 
-<p style="color:var(--muted);margin-top:4px;">
-  Department: {{ $doc->department->code ?? '-' }} — {{ $doc->department->name ?? '' }}
-</p>
-
-<h4 style="margin-top:16px;">Versions</h4>
-
-{{-- Compare selected (pilih 2 baris) --}}
-<div style="margin-bottom:12px;">
-  <button id="compare-selected" class="btn" disabled>Compare selected</button>
-</div>
-
-<table class="table">
-  <thead>
-    <tr>
-      <th style="width:36px"></th>
-      <th>Version</th>
-      <th>Status</th>
-      <th>Text</th>
-      <th>Signed By</th>
-      <th>Uploaded</th>
-      <th>Download</th>
-      <th>Compare</th>
-    </tr>
-  </thead>
-
-  <tbody>
-  @forelse($doc->versions as $v)
-    <tr>
-      {{-- Checkbox pilih --}}
-      <td>
-        <input type="checkbox" class="version-choose" value="{{ $v->id }}">
-      </td>
-
-      {{-- Version Label --}}
-      <td>{{ $v->version_label }}</td>
-
-      {{-- Status Badge --}}
-      <td>
-        @switch($v->status)
-          @case('approved') <span class="badge badge-success">approved</span> @break
-          @case('rejected') <span class="badge badge-danger">rejected</span> @break
-          @default          <span class="badge badge-warning">{{ $v->status ?? 'unknown' }}</span>
-        @endswitch
-      </td>
-
-      {{-- Text Availability --}}
-      <td>
-        @if(!empty($v->pasted_text))
-          <span class="badge badge-info">pasted</span>
-        @elseif(!empty($v->plain_text))
-          <span class="badge badge-success">indexed</span>
-        @else
-          <span class="badge badge-warning">no-text</span>
-        @endif
-      </td>
-
-      {{-- Signed by --}}
-      <td>{{ $v->signed_by ?? '-' }}</td>
-
-      {{-- Uploaded (safe date) --}}
-      <td>{{ optional($v->created_at)->format('Y-m-d') ?? '-' }}</td>
-
-      {{-- Download PDF --}}
-      <td>
-        <a class="btn-muted" href="{{ route('versions.download', $v->id) }}">Download</a>
-      </td>
-
-      {{-- Compare per-baris (dengan prevVersion jika ada) --}}
-      <td>
-        <a href="{{ route('documents.compare', [
-              'document' => $doc->id,
-              'v1'       => optional($v->prevVersion)->id,
-              'v2'       => $v->id
-          ]) }}"
-          class="btn btn-sm btn-outline-primary"
-          @if(!$v->prevVersion)
-            style="opacity:0.5;pointer-events:none;"
-          @endif
-        >
-          Compare
+    {{-- ACTION BUTTONS --}}
+    <div class="d-flex flex-wrap gap-2 mb-4">
+        <a href="{{ route('documents.edit', $document->id) }}" class="btn btn-primary">
+            ✏️ Edit Document Info
         </a>
-      </td>
-    </tr>
 
-  @empty
-    <tr>
-      <td colspan="8" style="text-align:center;color:var(--muted);padding:14px;">
-        No versions found.
-      </td>
-    </tr>
-  @endforelse
-  </tbody>
-</table>
+        @if($version)
+            <a href="{{ route('versions.create', ['document_id' => $document->id]) }}"
+               class="btn btn-outline-primary">
+                ➕ New Version
+            </a>
 
-{{-- JS: aktifkan tombol & navigate ke compare --}}
-<script>
-document.addEventListener('DOMContentLoaded', function(){
-  const btn = document.getElementById('compare-selected');
-  const checkboxes = Array.from(document.querySelectorAll('.version-choose'));
+            <a href="{{ route('versions.edit', $version->id) }}"
+               class="btn btn-outline-secondary">
+                🛠️ Edit Latest Version
+            </a>
+        @else
+            <a href="{{ route('versions.create', ['document_id' => $document->id]) }}"
+               class="btn btn-outline-primary">
+                📄 Add First Version
+            </a>
+        @endif
+    </div>
 
-  function updateBtn(){
-    const checked = checkboxes.filter(c => c.checked).map(c => c.value);
-    btn.disabled = checked.length !== 2;
-    btn.dataset.ids = checked.join(',');
-  }
 
-  checkboxes.forEach(cb => cb.addEventListener('change', updateBtn));
-  updateBtn();
+    {{-- NO VERSION YET --}}
+    @if(!$version)
+        <div class="alert alert-info">
+            <strong>Belum ada versi dokumen.</strong><br>
+            Klik <b>Add First Version</b> untuk menambahkan versi pertama.
+        </div>
+    @else
 
-  btn.addEventListener('click', function(){
-    const ids = this.dataset.ids;
-    if(!ids) return;
-    const parts = ids.split(',');
-    if(parts.length !== 2) return;
-    const v1 = parts[0];
-    const v2 = parts[1];
-    const base = @json(route('documents.compare', ['document' => $doc->id]));
-    const url = `${base}?v1=${encodeURIComponent(v1)}&v2=${encodeURIComponent(v2)}`;
-    window.location.href = url;
-  });
-});
-</script>
+        {{-- LATEST VERSION SUMMARY --}}
+        <div class="card mb-4">
+            <div class="card-header">
+                <strong>Latest Version — {{ $version->version_label }}</strong>
+            </div>
+            <div class="card-body">
+                <p>Status:
+                    <span class="badge bg-secondary">{{ $version->status }}</span>
+                </p>
+
+                @if($version->change_note)
+                    <p class="mb-1"><strong>Change Note:</strong></p>
+                    <p class="text-muted">{{ $version->change_note }}</p>
+                @endif
+            </div>
+        </div>
+
+    @endif
+
+
+    {{-- LIST OF ALL VERSIONS --}}
+    <h4>All Versions</h4>
+    <table class="table table-hover">
+        <thead>
+            <tr>
+                <th>Version</th>
+                <th>Status</th>
+                <th>Uploaded</th>
+                <th>Signed By</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            @forelse($versions as $v)
+                <tr>
+                    <td>{{ $v->version_label }}</td>
+                    <td><span class="badge bg-info">{{ $v->status }}</span></td>
+                    <td>{{ optional($v->created_at)->format('Y-m-d') }}</td>
+                    <td>{{ $v->signed_by ?? '-' }}</td>
+                    <td class="text-end">
+                        <a href="{{ route('versions.show', $v->id) }}"
+                           class="btn btn-sm btn-outline-primary">View</a>
+                    </td>
+                </tr>
+            @empty
+                <tr>
+                    <td colspan="5" class="text-muted text-center py-3">
+                        No versions found.
+                    </td>
+                </tr>
+            @endforelse
+        </tbody>
+    </table>
+
+
+    {{-- APPROVAL HISTORY (HANYA JIKA ADA VERSION) --}}
+    @if($version && \Schema::hasTable('approval_logs'))
+        @php
+            $logs = \DB::table('approval_logs')
+                ->join('users', 'users.id', '=', 'approval_logs.user_id')
+                ->select('approval_logs.*', 'users.name as user_name')
+                ->where('document_version_id', $version->id)
+                ->orderBy('approval_logs.created_at')
+                ->get();
+        @endphp
+
+        <div class="card mt-4">
+            <div class="card-header">
+                <strong>Approval History</strong>
+            </div>
+
+            <div class="card-body p-0">
+                @if($logs->isEmpty())
+                    <div class="p-3 text-muted">No approval activity yet.</div>
+                @else
+                    <div class="table-responsive">
+                        <table class="table table-sm mb-0">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Date</th>
+                                    <th>User</th>
+                                    <th>Role</th>
+                                    <th>Action</th>
+                                    <th>Note</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach($logs as $log)
+                                    <tr>
+                                        <td>{{ \Carbon\Carbon::parse($log->created_at)->format('Y-m-d H:i') }}</td>
+                                        <td>{{ $log->user_name }}</td>
+                                        <td>{{ $log->role ?: '-' }}</td>
+                                        <td>{{ ucfirst($log->action) }}</td>
+                                        <td>{{ $log->note ?: '-' }}</td>
+                                    </tr>
+                                @endforeach
+                            </tbody>
+                        </table>
+                    </div>
+                @endif
+            </div>
+        </div>
+    @endif
+
+</div>
 @endsection

@@ -4,28 +4,29 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\DocumentController;
+use App\Http\Controllers\DepartmentController;
+use App\Http\Controllers\ApprovalController;
+use App\Http\Controllers\DocumentVersionController;
 
 /*
 |--------------------------------------------------------------------------
-| AUTH ROUTES (Manual, tanpa Breeze)
+| AUTH
 |--------------------------------------------------------------------------
 */
-Route::get('/login',  [AuthController::class, 'showLoginForm'])->name('login');
-Route::post('/login', [AuthController::class, 'login'])->name('login.attempt');
+Route::get('/login',     [AuthController::class, 'showLoginForm'])->name('login');
+Route::post('/login',    [AuthController::class, 'login'])->name('login.attempt');
 
 Route::get('/register',  [AuthController::class, 'showRegisterForm'])->name('register');
 Route::post('/register', [AuthController::class, 'register'])->name('register.attempt');
 
-Route::post('/logout', [AuthController::class, 'logout'])
-    ->middleware('auth')
-    ->name('logout');
+Route::post('/logout',   [AuthController::class, 'logout'])->middleware('auth')->name('logout');
 
 /*
 |--------------------------------------------------------------------------
-| ROOT REDIRECT
+| ROOT
 |--------------------------------------------------------------------------
 */
-Route::get('/', fn () => redirect()->route('login'));
+Route::redirect('/', '/login');
 
 /*
 |--------------------------------------------------------------------------
@@ -38,7 +39,7 @@ Route::get('/dashboard', [DashboardController::class, 'index'])
 
 /*
 |--------------------------------------------------------------------------
-| ISO ROUTES (file terpisah)
+| EXTRA ISO ROUTES (optional separate file)
 |--------------------------------------------------------------------------
 */
 $isoRoutes = base_path('routes/iso_documents.php');
@@ -48,27 +49,82 @@ if (file_exists($isoRoutes)) {
 
 /*
 |--------------------------------------------------------------------------
-| DOCUMENT ROUTES (Pastikan tersedia)
+| DOCUMENTS (auth)
 |--------------------------------------------------------------------------
 */
-Route::get('/documents/create', [DocumentController::class, 'create'])
-    ->middleware('auth')
-    ->name('documents.create');
+Route::middleware('auth')->prefix('documents')->name('documents.')->group(function () {
+    // create + upload
+    Route::get('create', [DocumentController::class, 'create'])->name('create');
+    Route::post('upload-pdf', [DocumentController::class, 'uploadPdf'])->name('uploadPdf');
+
+    // compare
+    Route::get('{document}/compare', [DocumentController::class, 'compare'])
+        ->whereNumber('document')
+        ->name('compare');
+
+    // edit/update
+    Route::get('{document}/edit', [DocumentController::class, 'edit'])
+        ->whereNumber('document')
+        ->name('edit');
+
+    Route::put('{document}', [DocumentController::class, 'update'])
+        ->whereNumber('document')
+        ->name('update');
+});
 
 /*
 |--------------------------------------------------------------------------
-| UPLOAD PDF ROUTE (IMPORTANT: tanpa middleware role!)
+| VERSIONS (auth)
+| Termasuk: create, store, edit, update, submit, download
 |--------------------------------------------------------------------------
 */
-Route::post('/documents/upload-pdf', [DocumentController::class, 'uploadPdf'])
-    ->middleware('auth')   // ✅ ganti dari role:mr|admin|kabag menjadi auth saja
-    ->name('documents.uploadPdf');
+Route::middleware('auth')->prefix('versions')->name('versions.')->group(function () {
+    // create/store
+    Route::get('create', [DocumentVersionController::class, 'create'])->name('create');
+    Route::post('',       [DocumentVersionController::class, 'store'])->name('store');
+
+    // submit for approval
+    Route::post('{version}/submit', [DocumentVersionController::class, 'submitForApproval'])
+        ->whereNumber('version')
+        ->name('submit');
+
+    // download
+    Route::get('{version}/download', [DocumentVersionController::class, 'download'])
+        ->whereNumber('version')
+        ->name('download');
+
+    // edit/update
+    Route::get('{version}/edit', [DocumentVersionController::class, 'edit'])
+        ->whereNumber('version')
+        ->name('edit');
+
+    Route::put('{version}', [DocumentVersionController::class, 'update'])
+        ->whereNumber('version')
+        ->name('update');
+});
 
 /*
 |--------------------------------------------------------------------------
-| DOCUMENT COMPARE ROUTE
+| DEPARTMENTS (public)
 |--------------------------------------------------------------------------
 */
-Route::get('/documents/{document}/compare', [DocumentController::class, 'compare'])
-    ->middleware('auth')
-    ->name('documents.compare');
+Route::get('/departments',              [DepartmentController::class, 'index'])->name('departments.index');
+Route::get('/departments/{department}', [DepartmentController::class, 'show'])->name('departments.show');
+
+/*
+|--------------------------------------------------------------------------
+| APPROVAL QUEUE (auth)
+|--------------------------------------------------------------------------
+*/
+Route::middleware('auth')->group(function () {
+    Route::get('/approval',       [ApprovalController::class, 'index'])->name('approval.index');
+    Route::get('/approval-queue', [ApprovalController::class, 'index'])->name('approval.queue');
+
+    Route::post('/approval/{version}/approve', [ApprovalController::class, 'approve'])
+        ->whereNumber('version')
+        ->name('approval.approve');
+
+    Route::post('/approval/{version}/reject',  [ApprovalController::class, 'reject'])
+        ->whereNumber('version')
+        ->name('approval.reject');
+});

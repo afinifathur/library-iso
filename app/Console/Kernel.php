@@ -16,6 +16,7 @@ class Kernel extends ConsoleKernel
      */
     protected $commands = [
         \App\Console\Commands\ImportDocumentsCommand::class,
+        \App\Console\Commands\PopulateShortCodeCommand::class,
     ];
 
     protected function schedule(Schedule $schedule)
