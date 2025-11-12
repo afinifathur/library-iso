@@ -9,5 +9,11 @@ class Department extends Model
     public function documents()
     {
         return $this->hasMany(Document::class);
+        
     }
+    public function manager()
+{
+    return $this->belongsTo(\App\Models\User::class, 'manager_id');
+}
+
 }

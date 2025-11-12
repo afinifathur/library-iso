@@ -10,54 +10,82 @@ use Illuminate\Support\Facades\DB;
 class DepartmentController extends Controller
 {
     /**
-     * Tampilkan daftar departemen
+     * List all departments with PIC (if relation exists) and active document count.
+     *
+     * @param  \Illuminate\Http\Request  $request
+     * @return \Illuminate\View\View
      */
-    public function index()
+    public function index(Request $request)
     {
-        // Ambil semua departemen, urutkan alfabet
-        $departments = Department::orderBy('code')->get();
+        // Sesuaikan status yang dianggap "aktif" atau "published" pada aplikasi Anda
+        $activeStatusList = ['approved', 'published'];
+
+        $departments = Department::query()
+            // hitung dokumen yang memiliki minimal satu version dengan status aktif
+            ->withCount(['documents as active_documents_count' => function ($q) use ($activeStatusList) {
+                $q->whereHas('versions', function ($v) use ($activeStatusList) {
+                    $v->whereIn('status', $activeStatusList);
+                });
+            }])
+            // eager-load PIC/manager jika relasi didefinisikan pada model Department
+            ->with(['manager'])
+            ->orderBy('code')
+            ->get();
 
         return view('departments.index', compact('departments'));
     }
 
     /**
-     * Tampilkan detail departemen + dokumen + relasi
+     * Show a department and its documents (with versions), active count and related documents.
+     *
+     * @param  \Illuminate\Http\Request  $request
+     * @param  \App\Models\Department    $department
+     * @return \Illuminate\View\View
      */
     public function show(Request $request, Department $department)
     {
-        // Ambil dokumen di departemen ini, include versions (urut desc)
-        $docs = Document::where('department_id', $department->id)
-            ->with(['versions' => function ($q) {
-                $q->orderByDesc('id');
+        $activeStatusList = ['approved', 'published'];
+
+        // Ambil dokumen departemen dengan versions (versi terbaru diurutkan)
+        $documents = Document::with(['versions' => function ($q) {
+                $q->orderByDesc('created_at');
             }])
-            ->orderBy('short_code')
+            ->where('department_id', $department->id)
             ->orderBy('doc_code')
             ->get();
 
-        // Group berdasarkan short_code (IK, SOP, FORM, dll)
-        $groups = $docs->groupBy(function ($doc) {
-            return $doc->short_code ?? 'Uncategorized';
-        });
+        // Hitung jumlah dokumen yang memiliki versi aktif
+        $activeCount = $documents->filter(function ($doc) use ($activeStatusList) {
+            return $doc->versions->contains(function ($v) use ($activeStatusList) {
+                return in_array($v->status, $activeStatusList, true);
+            });
+        })->count();
 
-        // Ambil dokumen yang berelasi dengan dokumen pada departemen ini
-        $related = DB::table('document_relations as dr')
-            ->join('documents as d1', 'dr.document_id', '=', 'd1.id')
-            ->join('documents as d2', 'dr.related_document_id', '=', 'd2.id')
-            ->select(
-                'd1.id as doc_id',
-                'd1.doc_code as doc_code',
-                'd1.title as title',
-                'd2.id as related_to',
-                'd2.doc_code as related_code',
-                'd2.title as related_title'
-            )
-            ->where('d2.department_id', $department->id)
-            ->get();
+        // Cari dokumen terkait dengan fallback aman jika tabel relasi tidak ada
+        $related = collect();
+        try {
+            if (DB::getSchemaBuilder()->hasTable('document_relations')) {
+                $myDocIds = $documents->pluck('id')->filter()->values()->all();
 
-        return view('departments.show', [
-            'department' => $department,
-            'groups'     => $groups,
-            'related'    => $related,
-        ]);
+                if (!empty($myDocIds)) {
+                    // Ambil dokumen yang terkait (kedua arah) dan kelompokkan unik
+                    $related = DB::table('document_relations as dr')
+                        ->join('documents as d', 'd.id', '=', DB::raw('CASE WHEN dr.related_document_id IN (' . implode(',', array_map('intval', $myDocIds)) . ') THEN dr.document_id ELSE dr.related_document_id END'))
+                        ->select('d.id', 'd.doc_code', 'd.title', 'd.department_id')
+                        // cari relasi di mana salah satu sisi adalah dokumen kita
+                        ->where(function ($q) use ($myDocIds) {
+                            $q->whereIn('dr.document_id', $myDocIds)
+                              ->orWhereIn('dr.related_document_id', $myDocIds);
+                        })
+                        ->groupBy('d.id', 'd.doc_code', 'd.title', 'd.department_id')
+                        ->get();
+                }
+            }
+        } catch (\Throwable $e) {
+            // Jika terjadi error (mis. schema builder tidak tersedia), lanjutkan dengan koleksi kosong
+            $related = collect();
+        }
+
+        return view('departments.show', compact('department', 'documents', 'activeCount', 'related'));
     }
 }
