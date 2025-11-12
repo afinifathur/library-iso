@@ -1,4 +1,5 @@
 <?php
+
 namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
@@ -7,73 +8,78 @@ use App\Models\DocumentVersion;
 use App\Models\Department;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 
 class DashboardController extends Controller
 {
+    /**
+     * Show dashboard.
+     *
+     * - Produce: basic counts, weekly buckets (last 26 weeks),
+     *   donut status counts, recent activity and recent published lists.
+     *
+     * Note: if your DB uses different status names, adjust the status arrays accordingly.
+     */
     public function index(Request $request)
     {
-        // cache entire dashboard payload for 30 seconds to reduce DB load
-        $data = Cache::remember('dashboard.payload', 30, function () {
-            // top-level counters
-            $totalDocuments = Document::count();
-            $totalVersions = DocumentVersion::count();
+        // basic counts
+        $totalDocuments = Document::count();
+        $totalVersions  = DocumentVersion::count();
 
-            // statuses
-            $pendingCount = DocumentVersion::whereIn('status', ['draft','pending','submitted'])->count();
-            $approvedCount = DocumentVersion::where('status', 'approved')->count();
-            $rejectedCount = DocumentVersion::where('status','rejected')->count();
-            $otherCount = $totalVersions - ($pendingCount + $approvedCount + $rejectedCount);
-            if ($otherCount < 0) $otherCount = 0;
+        // status counts (adjust status names if your app uses different values)
+        $pendingCount   = DocumentVersion::where('status', 'draft')->count();
+        $approvedCount  = DocumentVersion::whereIn('status', ['approved', 'published'])->count();
+        $rejectedCount  = DocumentVersion::where('status', 'rejected')->count();
 
-            // recent activity: latest 12 versions uploaded
-            $recentVersions = DocumentVersion::with('document','creator')
-                ->orderByDesc('created_at')
-                ->take(12)
-                ->get();
+        // weekly buckets (last 26 weeks)
+        $weeks = [];
+        $counts = [];
+        $now = Carbon::now();
 
-            // per-department stats
-            $departments = Department::orderBy('code')->get()->map(function($d){
-                $docCount = $d->documents()->count();
-                $pending = \DB::table('document_versions as dv')
-                    ->join('documents as d','dv.document_id','d.id')
-                    ->where('d.department_id', $d->id)
-                    ->whereIn('dv.status', ['draft','pending','submitted'])
-                    ->count();
-                return [
-                    'id' => $d->id,
-                    'code' => $d->code,
-                    'name' => $d->name,
-                    'doc_count' => $docCount,
-                    'pending' => $pending,
-                ];
-            });
+        // Build 26 weeks: W-25 ... W0 (week start = Monday)
+        for ($i = 25; $i >= 0; $i--) {
+            $start = $now->copy()->startOfWeek()->subWeeks($i); // Monday
+            $end   = $start->copy()->endOfWeek();               // Sunday
+            $weeks[] = $start->format('d M');                   // e.g. "07 Jul"
+            $counts[] = DocumentVersion::whereBetween('created_at', [
+                $start->copy()->startOfDay(),
+                $end->copy()->endOfDay(),
+            ])->count();
+        }
 
-            // monthly new versions (last 6 months)
-            $months = collect();
-            $labels = collect();
-            for ($i = 5; $i >= 0; $i--) {
-                $m = Carbon::now()->subMonths($i);
-                $labels->push($m->format('M Y'));
-                $months->push(DocumentVersion::whereYear('created_at', $m->year)
-                    ->whereMonth('created_at', $m->month)
-                    ->count());
-            }
+        // donut values
+        $pending  = $pendingCount;
+        $approved = $approvedCount;
+        $rejected = $rejectedCount;
+        $other    = max(0, $totalVersions - ($pending + $approved + $rejected));
 
-            return [
-                'totalDocuments' => $totalDocuments,
-                'totalVersions' => $totalVersions,
-                'pendingCount' => $pendingCount,
-                'approvedCount' => $approvedCount,
-                'rejectedCount' => $rejectedCount,
-                'otherCount' => $otherCount,
-                'recentVersions' => $recentVersions,
-                'departments' => $departments,
-                'spark_labels' => $labels->toArray(),
-                'spark_data' => $months->toArray(),
-            ];
-        });
+        // recent lists (eager load to avoid N+1)
+        $recentActivity = DocumentVersion::with(['document', 'creator'])
+            ->orderByDesc('created_at')
+            ->limit(15)
+            ->get();
 
-        // pass data to view
-        return view('dashboard.index', $data);
+        $recentPublished = DocumentVersion::with('document')
+            ->whereIn('status', ['approved', 'published'])
+            ->orderByDesc('signed_at')
+            ->limit(10)
+            ->get();
+
+        // return view with compacted data
+        return view('dashboard.index', compact(
+            'totalDocuments',
+            'totalVersions',
+            'pendingCount',
+            'approvedCount',
+            'rejectedCount',
+            'weeks',
+            'counts',
+            'pending',
+            'approved',
+            'rejected',
+            'other',
+            'recentActivity',
+            'recentPublished'
+        ));
     }
 }

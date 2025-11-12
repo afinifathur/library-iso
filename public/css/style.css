@@ -1,11 +1,14 @@
-/* public/css/style.css - consolidated, minimal & compatible with older browsers */
+/* public/css/style.css
+   Consolidated, minimal & compatible with older browsers
+*/
 
-/* variables */
+/* ---------- VARIABLES (useful fallbacks included) ---------- */
 :root {
     --bg: #f6f8fa;
     --card: #ffffff;
     --muted: #6b7280;
     --accent: #2563eb;
+    --accent-strong: #0b66ff;
     --success: #16a34a;
     --warning: #f59e0b;
     --danger: #ef4444;
@@ -16,6 +19,12 @@
         monospace;
 }
 
+/* ---------- OPTIONAL FONT (remove if no Internet access) ---------- */
+/* If environment has no Internet, delete or comment out the @import line.
+   Fallback will use system fonts specified on body. */
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap");
+
+/* ---------- GLOBAL ---------- */
 * {
     box-sizing: border-box;
 }
@@ -25,20 +34,29 @@ body {
 }
 body {
     margin: 0;
-    font-family: "Helvetica Neue", Arial, sans-serif;
-    background: linear-gradient(180deg, #f8fafc 0%, var(--bg) 100%);
-    color: #111827;
     padding: 20px;
     display: flex;
     justify-content: center;
+    color: #111827;
+    /* fallback solid color then gradient for modern browsers */
+    background: var(--bg);
+    background: linear-gradient(180deg, #f8fafc 0%, var(--bg) 100%);
+    font-family: "Inter", system-ui, -apple-system, "Segoe UI", Roboto,
+        "Helvetica Neue", Arial, sans-serif;
 }
 
+/* container widths */
 .container {
     width: 100%;
     max-width: var(--maxwidth);
 }
+.app-container {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 18px;
+}
 
-/* header */
+/* ---------- HEADER / BRAND / NAV ---------- */
 .site-header {
     display: flex;
     align-items: center;
@@ -58,11 +76,12 @@ body {
     height: 46px;
     border-radius: 8px;
     background: linear-gradient(135deg, #2563eb, #06b6d4);
-    color: white;
+    color: #fff;
     display: flex;
     align-items: center;
     justify-content: center;
     font-weight: 700;
+    flex: 0 0 46px;
 }
 .brand-text h1 {
     margin: 0;
@@ -73,36 +92,93 @@ body {
     color: var(--muted);
 }
 
+/* NAVBAR: single-line horizontal scroll on small screens */
 .main-nav {
     display: flex;
-    gap: 12px;
+    flex-wrap: nowrap; /* prevent wrapping - allow horizontal scroll */
+    gap: 20px;
     align-items: center;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    white-space: nowrap;
+    padding: 8px 12px;
+    /* provide minimal fallback for browsers that don't support gap on flex:
+     children can have margin-right if needed in markup */
 }
+
+/* scrollbar minimalis (webkit only) */
+.main-nav::-webkit-scrollbar {
+    height: 8px;
+}
+.main-nav::-webkit-scrollbar-thumb {
+    background: rgba(0, 0, 0, 0.08);
+    border-radius: 6px;
+}
+
+/* nav links - single source of truth */
 .main-nav a {
-    color: #374151;
+    flex: 0 0 auto;
+    white-space: nowrap;
+    color: #28303b; /* normal link color per request */
     text-decoration: none;
     padding: 8px 12px;
     border-radius: 8px;
     font-weight: 600;
+    display: inline-block;
 }
+
+/* active nav pill: lebih kontras biru pekat (snippet replacement) */
+.main-nav a.active {
+    background: var(--accent-strong) !important;
+    color: #fff !important;
+    box-shadow: 0 8px 22px rgba(11, 102, 255, 0.12);
+    border-radius: 8px;
+    padding: 8px 14px;
+}
+
+/* hover state */
 .main-nav a:hover {
     background: #f3f4f6;
+    color: inherit;
 }
-.main-nav a.active {
-    background: var(--accent);
-    color: white;
+.main-nav a:hover,
+a:hover {
+    color: var(--accent-strong);
+    text-decoration: underline;
+}
+
+/* responsive: kecilkan tampilan navbar */
+@media (max-width: 1100px) {
+    .main-nav {
+        gap: 12px;
+        padding: 6px 8px;
+    }
+    .main-nav a {
+        padding: 6px 8px;
+        font-size: 14px;
+    }
+    .main-nav a.active {
+        padding: 6px 10px;
+    }
+}
+
+/* ---------- PAGE / CARDS / DASHBOARD ---------- */
+.page-card,
+.card-section .card-inner,
+.stat-card {
+    border: 1px solid #eef4fb;
+    background: var(--card);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
 }
 
 /* main card */
 .page-card {
-    background: var(--card);
-    border-radius: var(--radius);
-    box-shadow: var(--shadow);
     padding: 20px;
     min-height: 60vh;
 }
 
-/* dashboard */
+/* dashboard top */
 .dashboard-top {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
@@ -110,10 +186,8 @@ body {
     margin-bottom: 18px;
 }
 .stat-card {
-    background: #fff;
-    border-radius: 10px;
     padding: 14px;
-    border: 1px solid #f0f3f7;
+    border-radius: 10px;
 }
 .stat-card .label {
     font-size: 12px;
@@ -125,6 +199,7 @@ body {
     font-weight: 700;
 }
 
+/* dashboard grid (responsive) */
 .dashboard-grid {
     display: grid;
     grid-template-columns: 1fr 420px;
@@ -136,19 +211,21 @@ body {
     }
 }
 
+/* card-inner */
 .card-section .card-inner {
-    background: #fff;
-    border-radius: 10px;
     padding: 14px;
+    border-radius: 10px;
     border: 1px solid #f0f3f7;
     box-shadow: 0 2px 10px rgba(15, 23, 42, 0.04);
 }
 
+/* ---------- TABLES / LISTS / LINKS ---------- */
 .table {
     width: 100%;
     border-collapse: collapse;
     margin-top: 8px;
     font-size: 14px;
+    color: #1f2937;
 }
 .table th,
 .table td {
@@ -161,9 +238,41 @@ body {
     color: var(--muted);
     font-size: 13px;
 }
+
+/* make table scrollable in a card (keeps header readable) */
+.card-section.card-inner .table {
+    max-height: 420px;
+    overflow-y: auto;
+    display: block;
+}
+
+/* links inside tables */
+a,
+.table a {
+    color: #6b7280;
+    text-decoration: none;
+}
+.table a:hover {
+    color: var(--accent-strong);
+    text-decoration: underline;
+}
+
+/* recent activity list styling */
+.card-section.card-inner ul {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+.card-section.card-inner ul li {
+    margin-bottom: 12px;
+    border-bottom: 1px solid #f3f6f9;
+    padding-bottom: 10px;
+}
+
+/* ---------- BADGES / BUTTONS / FORMS ---------- */
 .badge {
     display: inline-block;
-    padding: 4px 8px;
+    padding: 6px 10px;
     border-radius: 999px;
     font-size: 12px;
     font-weight: 600;
@@ -180,9 +289,10 @@ body {
     background: var(--danger);
     color: #fff;
 }
+
 .btn {
     padding: 8px 12px;
-    border-radius: 8px;
+    border-radius: 10px;
     border: none;
     background: var(--accent);
     color: #fff;
@@ -198,22 +308,28 @@ body {
     text-decoration: none;
     display: inline-block;
 }
+
+/* ---------- TYPOGRAPHY / SMALL HELP TEXT ---------- */
+.h2 {
+    margin: 0 0 12px 0;
+    font-size: 22px;
+    font-weight: 700;
+}
 .footer-small {
     font-size: 13px;
     color: var(--muted);
     margin-top: 18px;
     text-align: center;
 }
-.h2 {
-    margin: 0 0 12px 0;
-    font-size: 22px;
-    font-weight: 700;
-}
+
+/* unified small-muted */
 .small-muted {
     color: var(--muted);
     font-size: 13px;
+    margin-top: 6px;
 }
-/* form styles */
+
+/* ---------- FORMS ---------- */
 .form-row {
     margin-bottom: 12px;
 }
@@ -233,71 +349,68 @@ body {
     border-color: #94b7ff;
     box-shadow: 0 0 0 3px rgba(148, 183, 255, 0.25);
 }
-.small-muted {
-    margin-top: 6px;
-    font-size: 12px;
-    color: var(--muted, #64748b);
-}
 
-/* optional: responsive tweak for tight screens */
-@media (max-width: 640px) {
+/* ---------- SMALL SCREEN TWEAKS ---------- */
+@media (max-width: 900px) {
+    .card-section.card-inner ul li {
+        font-size: 14px;
+    }
     .form-row {
         margin-bottom: 10px;
     }
 }
-/* -------------------------------------------------------
-   NAVBAR: Single-line, horizontal scroll on small screens
---------------------------------------------------------*/
-.main-nav {
-    display: flex;
-    flex-wrap: nowrap;
-    gap: 20px;
-    align-items: center;
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-    white-space: nowrap;
-    padding: 8px 12px;
+
+/* ---------- STATUS BADGES ---------- */
+.badge {
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: capitalize;
+}
+.badge-draft,
+.badge-pending {
+    background: #3b82f6;
+    color: #fff;
+}
+.badge-submitted {
+    background: #f59e0b;
+    color: #fff;
+}
+.badge-approved,
+.badge-published {
+    background: #16a34a;
+    color: #fff;
+}
+.badge-rejected {
+    background: #ef4444;
+    color: #fff;
+}
+.badge-other {
+    background: #9ca3af;
+    color: #fff;
 }
 
-/* Scrollbar minimalis */
-.main-nav::-webkit-scrollbar {
-    height: 8px;
-}
-.main-nav::-webkit-scrollbar-thumb {
-    background: rgba(0, 0, 0, 0.08);
-    border-radius: 6px;
-}
-
-/* Nav links */
-.main-nav a {
-    flex: 0 0 auto;
-    white-space: nowrap;
+/* ---------- SECTION HEADINGS ---------- */
+.section-title {
+    color: #0b66ff;
+    font-weight: 700;
+    margin-bottom: 10px;
+    font-size: 16px;
 }
 
-/* Responsive: kecilkan tampilan navbar */
-@media (max-width: 1100px) {
-    .main-nav {
-        gap: 12px;
-        padding: 6px 8px;
-    }
-    .main-nav a {
-        padding: 6px 8px;
-        font-size: 14px;
-    }
+/* ---------- HIGHLIGHT BOX HEADERS ---------- */
+.card-section h4 {
+    color: #0b66ff;
+    font-weight: 700;
+    font-size: 15px;
+    margin-bottom: 8px;
 }
 
-/* -------------------------------------------------------
-   CONTAINER WIDTH: LEBIH LEBAR & MODERN
---------------------------------------------------------*/
-.app-container {
-    max-width: 1400px; /* Bisa dinaikkan ke 1500 / 1600 */
-    margin: 0 auto;
-    padding: 18px;
-}
-
-/* Full fluid mode (opsional)
-.app-container {
-  max-width: 100%;
-  padding: 18px 28px;
-}
-*/
+/* ---------- LEGACY / OLDER BROWSER NOTES ----------
+   - CSS variables are used; for very old browsers that do not support them, values will fall back
+     to the hard-coded defaults used throughout (colors set directly where critical).
+   - Grid & gap are used; for IE11 consider using flex alternatives or simple stacked layout.
+   - @import Google Fonts requires Internet — remove if running on isolated LAN.
+------------------------------------------------------------------ */

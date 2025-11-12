@@ -24,6 +24,22 @@
     .login-card .form-control { border-radius:8px; padding:.6rem .75rem; }
     .btn-primary { background:#1e88ff; border-color:#1e88ff; }
     .btn-primary:hover { background:#166fe0; border-color:#166fe0; }
+
+    /* header/brand tweaks */
+    .site-header { display:flex; align-items:center; justify-content:space-between; padding:12px 18px; border-bottom:1px solid #eef6fb; background: #fff; }
+    .brand { display:flex; align-items:center; gap:12px; text-decoration:none; color:inherit; }
+    .brand .logo-img { width:46px; height:46px; border-radius:8px; object-fit:cover; }
+    .brand-text { line-height:1; }
+    .brand-text .title { font-weight:700; font-size:16px; }
+    .brand-text .sub { font-size:12px; color:#6b7280; }
+    .main-nav { display:flex; gap:10px; align-items:center; }
+    .main-nav a { padding:8px 10px; border-radius:8px; color:#0b5ed7; text-decoration:none; }
+    .main-nav a.active { background:#eef7ff; font-weight:600; }
+    .btn-muted { background:transparent; border:1px solid transparent; padding:6px 8px; border-radius:8px; color:#0b5ed7; text-decoration:none; }
+    .footer-small { margin-top:18px; font-size:13px; color:#6b7280; text-align:center; padding:10px 0; }
+    .app-container { min-height:100vh; background:#f7fbff; }
+    .main-area { padding:18px; }
+    .page-card { max-width:1200px; margin:0 auto; }
   </style>
 
 </head>
@@ -36,15 +52,16 @@
     {{-- ========================== --}}
     @if(!Request::is('login') && !Route::is('login'))
       <header class="site-header">
-        <a class="brand" href="{{ route('dashboard.index') }}">
-          <div class="logo">ISO</div>
+        {{-- updated brand/logo --}}
+        <a href="{{ url('/') }}" class="brand" aria-label="Document Control — Management System">
+          <img src="{{ asset('images/logo.png') }}" alt="Document Control" class="logo-img">
           <div class="brand-text">
-            <h1>ISO Library</h1>
-            <div class="sub">Dokumentasi Mutu & SOP</div>
+            <div class="title">Document Control</div>
+            <div class="sub">Management System</div>
           </div>
         </a>
 
-        <nav class="main-nav">
+        <nav class="main-nav" role="navigation" aria-label="Main navigation">
           <a href="{{ route('dashboard.index') }}" class="{{ request()->routeIs('dashboard*') ? 'active' : '' }}">Dashboard</a>
           <a href="{{ route('documents.index') }}" class="{{ request()->routeIs('documents*') ? 'active' : '' }}">Documents</a>
           <a href="{{ route('categories.index') }}" class="{{ request()->routeIs('categories*') ? 'active' : '' }}">Categories</a>
@@ -69,7 +86,7 @@
         @yield('content')
       </div>
 
-      <div class="footer-small">&copy; {{ date('Y') }} ISO Library — built for offline/LAN use</div>
+      <div class="footer-small">&copy; {{ date('Y') }} ISO Library — Peroni Karya Sentra</div>
     </main>
 
   </div>

@@ -11,6 +11,7 @@
         "jfcherng/php-diff": "^6.16",
         "laravel/framework": "^12.0",
         "laravel/tinker": "^2.10.1",
+        "league/csv": "^9.27",
         "spatie/laravel-permission": "^6.23"
     },
     "require-dev": {
