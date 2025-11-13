@@ -408,6 +408,39 @@ a,
     margin-bottom: 8px;
 }
 
+/* badge subtle colors */
+.bg-primary-subtle {
+    background: #e8f0ff;
+}
+.bg-warning-subtle {
+    background: #fff4cc;
+}
+.btn-success {
+    background: #16a34a; /* hijau */
+    color: #fff;
+    border: none;
+}
+.btn-danger {
+    background: #ef4444; /* merah */
+    color: #fff;
+    border: none;
+}
+.btn-outline-primary {
+    border: 1px solid #1e88ff;
+    color: #1e88ff;
+    background: transparent;
+}
+.btn-outline-secondary {
+    border: 1px solid #6b7280;
+    color: #374151;
+    background: transparent;
+}
+.btn:disabled,
+button[disabled] {
+    opacity: 0.55;
+    pointer-events: none;
+}
+
 /* ---------- LEGACY / OLDER BROWSER NOTES ----------
    - CSS variables are used; for very old browsers that do not support them, values will fall back
      to the hard-coded defaults used throughout (colors set directly where critical).
