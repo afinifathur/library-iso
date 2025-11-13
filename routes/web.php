@@ -8,6 +8,7 @@ use App\Http\Controllers\DepartmentController;
 use App\Http\Controllers\ApprovalController;
 use App\Http\Controllers\DocumentVersionController;
 use App\Http\Controllers\DraftController;
+use App\Http\Controllers\CategoryController;
 
 /*
 |--------------------------------------------------------------------------
@@ -81,6 +82,7 @@ Route::middleware('auth')->prefix('documents')->name('documents.')->group(functi
         ->name('versions.download');
 });
 
+Route::middleware('auth')->get('/categories', [CategoryController::class, 'index'])->name('categories.index');
 /*
 |--------------------------------------------------------------------------
 | VERSIONS (auth)

@@ -12,7 +12,7 @@ use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
-// Opsional (composer require jfcherng/php-diff)
+// Optional diff library
 use Jfcherng\Diff\DiffHelper;
 
 class DocumentController extends Controller
@@ -24,13 +24,29 @@ class DocumentController extends Controller
     {
         $departments = Department::orderBy('code')->get();
 
+        // load categories if model exists (optional)
+        $categories = [];
+        if (class_exists(\App\Models\Category::class)) {
+            $categories = \App\Models\Category::orderBy('name')->get();
+        }
+
         $docs = Document::with(['department', 'currentVersion'])
+            // filter by department (code or id)
             ->when($request->filled('department'), function ($q) use ($request) {
                 $dept = $request->input('department');
                 $q->whereHas('department', function ($qb) use ($dept) {
                     $qb->where('code', $dept)->orWhere('id', $dept);
                 });
             })
+            // filter by category (support both category_id or category string)
+            ->when($request->filled('category'), function ($q) use ($request) {
+                $cat = $request->input('category');
+                $q->where(function ($qq) use ($cat) {
+                    $qq->where('category_id', $cat)
+                       ->orWhere('category', $cat);
+                });
+            })
+            // search across doc_code, title, and version text (plain/pasted)
             ->when($request->filled('search'), function ($q) use ($request) {
                 $s = $request->input('search');
                 $q->where(function ($qq) use ($s) {
@@ -46,7 +62,11 @@ class DocumentController extends Controller
             ->paginate(25)
             ->appends($request->query());
 
-        return view('documents.index', compact('docs', 'departments'));
+        return view('documents.index', [
+            'docs' => $docs,
+            'departments' => $departments,
+            'categories' => $categories,
+        ]);
     }
 
     /**
@@ -71,7 +91,6 @@ class DocumentController extends Controller
 
     /**
      * Update metadata dokumen (bukan versi).
-     * (Tetap ada untuk kompatibilitas form lama)
      */
     public function update(Request $request, $id)
     {
@@ -107,8 +126,8 @@ class DocumentController extends Controller
         }
 
         $request->validate([
-            'file'           => 'nullable|file|mimes:pdf|max:51200',                 // 50 MB
-            'master_file'    => 'nullable|file|mimes:doc,docx,xls,xlsx|max:102400', // 100 MB
+            'file'           => 'nullable|file|mimes:pdf|max:51200',
+            'master_file'    => 'nullable|file|mimes:doc,docx,xls,xlsx|max:102400',
             'version_label'  => 'required|string|max:50',
             'doc_code'       => 'nullable|string|max:80',
             'document_id'    => 'nullable|integer',
@@ -229,55 +248,89 @@ class DocumentController extends Controller
 
     /**
      * Compare dua versi. Jika kosong, ambil 2 terbaru.
+     *
+     * Accepts:
+     * - ?versions[]=7&versions[]=8
+     * - ?version=7 (single)
+     * - ?v1=7&v2=8 (legacy)
      */
     public function compare(Request $request, $documentId)
     {
         $doc = Document::with('versions')->findOrFail($documentId);
 
-        $v1 = $request->query('v1');
-        $v2 = $request->query('v2');
+        // prefer array parameter 'versions[]', fallback to v1/v2 or single 'version' or 'v[]'
+        $versionsQuery = $request->query('versions', null);
 
-        if (! $v1 || ! $v2) {
-            $versions = $doc->versions()->orderByDesc('id')->take(2)->get();
-            if ($versions->count() < 2) {
-                return back()->with('error', 'Dokumen ini belum punya 2 versi untuk dibandingkan.');
+        if (is_null($versionsQuery)) {
+            if ($request->filled('v1') && $request->filled('v2')) {
+                $versionsQuery = [$request->query('v1'), $request->query('v2')];
+            } elseif ($request->filled('version')) {
+                $versionsQuery = [$request->query('version')];
+            } elseif ($request->filled('v')) {
+                $versionsQuery = $request->query('v');
             }
-            $v1 = $versions[1]->id;
-            $v2 = $versions[0]->id;
         }
 
-        $ver1 = DocumentVersion::findOrFail($v1);
-        $ver2 = DocumentVersion::findOrFail($v2);
+        // Normalize: ensure array of numeric ids (unique)
+        $versions = collect($versionsQuery ?? [])
+            ->flatten()
+            ->map(fn($v) => is_numeric($v) ? (int)$v : null)
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
+
+        // If no selections, fallback to two latest versions
+        if (count($versions) < 2) {
+            $latest = $doc->versions()->orderByDesc('id')->take(2)->get();
+            if ($latest->count() < 2) {
+                return back()->with('error', 'Dokumen ini belum punya 2 versi untuk dibandingkan.');
+            }
+            $ver1 = $latest->last();
+            $ver2 = $latest->first();
+        } else {
+            $versionsData = DocumentVersion::whereIn('id', $versions)
+                ->where('document_id', $documentId)
+                ->orderBy('id')
+                ->get();
+
+            if ($versionsData->count() < 2) {
+                return back()->with('error', 'Beberapa versi yang dipilih tidak ditemukan pada dokumen ini atau tidak valid.');
+            }
+
+            $ver1 = $versionsData->first();
+            $ver2 = $versionsData->last();
+        }
 
         $text1 = $ver1->plain_text ?: ($ver1->pasted_text ?: '(Tidak ada teks)');
         $text2 = $ver2->plain_text ?: ($ver2->pasted_text ?: '(Tidak ada teks)');
 
         $diff = $this->buildDiff($text1, $text2);
 
-        return view('documents.compare', compact('doc', 'ver1', 'ver2', 'diff'));
+        $selectedVersions = $versions;
+
+        return view('documents.compare', compact('doc', 'ver1', 'ver2', 'diff', 'selectedVersions'));
     }
 
     /**
      * Detail dokumen + latest version + semua versi.
-     * (route-model binding: {document})
      */
     public function show(Document $document)
     {
         $document->load(['department', 'versions.creator' => fn ($q) => $q->orderByDesc('id')]);
         $versions = $document->versions->sortByDesc('id')->values();
-        $version  = $versions->first(); // bisa null
+        $version  = $versions->first();
 
         return view('documents.show', [
             'document' => $document,
             'versions' => $versions,
             'version'  => $version,
-            'doc'      => $document, // alias utk kompatibilitas view lama
+            'doc'      => $document,
         ]);
     }
 
     /**
-     * Form gabungan: update metadata dokumen + buat/update versi terbaru.
-     * (PUT /documents/{document})
+     * Update metadata dokumen + buat/update versi terbaru.
      */
     public function updateCombined(Request $request, Document $document)
     {
@@ -285,8 +338,6 @@ class DocumentController extends Controller
             'doc_code'       => ['required','string','max:80', Rule::unique('documents','doc_code')->ignore($document->id)],
             'title'          => 'required|string|max:255',
             'department_id'  => 'required|integer|exists:departments,id',
-
-            // bagian versi
             'version_id'     => 'nullable|integer|exists:document_versions,id',
             'version_label'  => 'required|string|max:50',
             'file'           => 'nullable|file|mimes:pdf,doc,docx|max:51200',
@@ -297,14 +348,12 @@ class DocumentController extends Controller
             'submit_for'     => 'nullable|in:save,submit',
         ]);
 
-        // Update metadata dokumen
         $document->update([
             'doc_code'      => $validated['doc_code'],
             'title'         => $validated['title'],
             'department_id' => (int) $validated['department_id'],
         ]);
 
-        // Ambil versi (jika edit) atau siapkan baru
         $version = null;
         if (!empty($validated['version_id'])) {
             $version = DocumentVersion::where('document_id', $document->id)
@@ -317,7 +366,6 @@ class DocumentController extends Controller
         $file_mime = $version->file_mime ?? null;
         $checksum  = $version->checksum  ?? null;
 
-        // Ganti/unggah file (opsional)
         if ($request->hasFile('file')) {
             if ($file_path && $disk->exists($file_path)) {
                 $disk->delete($file_path);
@@ -335,7 +383,6 @@ class DocumentController extends Controller
             $checksum  = hash('sha256', $content);
         }
 
-        // Jika belum ada versi → buat baru
         if (! $version) {
             $version = new DocumentVersion();
             $version->document_id    = $document->id;
@@ -344,7 +391,6 @@ class DocumentController extends Controller
             $version->approval_stage = 'KABAG';
         }
 
-        // Set kolom versi
         $version->version_label = $validated['version_label'];
         $version->file_path     = $file_path;
         $version->file_mime     = $file_mime;
@@ -361,7 +407,6 @@ class DocumentController extends Controller
 
         $version->save();
 
-        // Bersihkan cache dashboard jika ada
         Cache::forget('dashboard.payload');
 
         $msg = 'Document and version saved.';
@@ -379,7 +424,6 @@ class DocumentController extends Controller
 
     /**
      * Unduh berkas versi.
-     * (GET /documents/versions/{version}/download)
      */
     public function downloadVersion(DocumentVersion $version)
     {
@@ -392,8 +436,7 @@ class DocumentController extends Controller
     }
 
     /**
-     * BUAT DOKUMEN BARU + BASELINE V1 APPROVED (sesuai instruksi).
-     * (POST /documents)
+     * BUAT DOKUMEN BARU + BASELINE V1 APPROVED.
      */
     public function store(Request $request)
     {
@@ -414,7 +457,6 @@ class DocumentController extends Controller
             'doc_number'     => 'nullable|string|max:120',
         ]);
 
-        // Generate doc_code jika kosong
         if (empty($data['doc_code'])) {
             $dept      = Department::find($data['department_id']);
             $deptCode  = $dept?->code ?? 'MISC';
@@ -427,7 +469,6 @@ class DocumentController extends Controller
 
         $disk = Storage::disk('documents');
 
-        // Simpan file (opsional)
         $file_path = null;
         $file_mime = null;
         $checksum  = null;
@@ -435,7 +476,6 @@ class DocumentController extends Controller
             $file     = $request->file('file');
             $safeName = $this->safeFilename($file->getClientOriginalName());
             $filename = time().'_'.Str::slug(pathinfo($safeName, PATHINFO_FILENAME)).'.'.pathinfo($safeName, PATHINFO_EXTENSION);
-            // sementara folder v1 (atau label custom) supaya rapi
             $tmpVersionLabel = $data['version_label'] ?? 'v1';
             $folder   = $data['doc_code'].'/'.$tmpVersionLabel;
             $file_path = $folder.'/'.$filename;
@@ -446,7 +486,6 @@ class DocumentController extends Controller
             $checksum  = hash('sha256', $content);
         }
 
-        // Resolusi approved_by (email -> id) default uploader
         $approvedByUserId = $user?->id;
         if (!empty($data['approved_by'])) {
             $u = \App\Models\User::where('email', $data['approved_by'])->first();
@@ -459,9 +498,7 @@ class DocumentController extends Controller
         $versionCreatedAt = !empty($data['created_at']) ? Carbon::parse($data['created_at']) : now();
         $approvedAt       = !empty($data['approved_at']) ? Carbon::parse($data['approved_at']) : now();
 
-        // Transaksi untuk konsistensi DB (file sudah tertulis; jika gagal DB, kamu bisa hapus file manual sesuai kebutuhan)
         return DB::transaction(function () use ($request, $data, $versionLabel, $versionCreatedAt, $approvedAt, $approvedByUserId, $file_path, $file_mime, $checksum) {
-            // Buat dokumen
             $document = Document::create([
                 'doc_code'      => $data['doc_code'],
                 'title'         => $data['title'],
@@ -470,11 +507,10 @@ class DocumentController extends Controller
                 'doc_number'    => $data['doc_number'] ?? null,
             ]);
 
-            // Buat versi baseline (approved)
             $version = new DocumentVersion();
             $version->document_id    = $document->id;
             $version->version_label  = $versionLabel;
-            $version->status         = 'approved';     // baseline approved
+            $version->status         = 'approved';
             $version->approval_stage = 'DONE';
             $version->created_by     = $request->user()->id ?? null;
             $version->file_path      = $file_path;
@@ -488,7 +524,6 @@ class DocumentController extends Controller
                 $version->plain_text  = $clean;
             }
 
-            // timestamps manual untuk baseline/history
             $version->timestamps  = false;
             $version->created_at  = $versionCreatedAt;
             $version->updated_at  = $versionCreatedAt;
@@ -496,7 +531,6 @@ class DocumentController extends Controller
             $version->approved_at = $approvedAt;
             $version->save();
 
-            // set pointer current version
             $document->current_version_id = $version->id;
             $document->revision_number    = 1;
             $document->revision_date      = $approvedAt;
@@ -603,9 +637,7 @@ class DocumentController extends Controller
 
     protected function safeFilename(string $original): string
     {
-        // Amankan nama file (tanpa karakter aneh)
         $name = preg_replace('/[^\w\.\-]+/u', '_', $original);
-        // Hindari nama kosong
         return $name ?: ('file_'.Str::random(8));
     }
 }

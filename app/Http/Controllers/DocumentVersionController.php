@@ -9,6 +9,8 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 class DocumentVersionController extends Controller
 {
@@ -51,25 +53,32 @@ class DocumentVersionController extends Controller
         $fileMime = null;
         $checksum = null;
 
+        // gunakan disk 'documents' untuk konsistensi
+        $disk = Storage::disk('documents');
+
         if ($request->hasFile('file')) {
             $file   = $request->file('file');
-            $folder = 'documents/' . ($document->doc_code ?: 'misc');
+            $folder = ($document->doc_code ?: 'misc') . '/' . now()->format('Ymd');
 
             $original = pathinfo($file->getClientOriginalName(), PATHINFO_FILENAME);
             $ext      = $file->getClientOriginalExtension();
-            $safeName = time() . '_' . Str::random(6) . '_' . Str::slug($original, '_') . ($ext ? ".{$ext}" : '');
+            $safeName = $this->safeFilename($original) . ($ext ? ".{$ext}" : '');
+            $safeName = now()->timestamp . '_' . Str::random(6) . '_' . $safeName;
 
-            $filePath = $file->storeAs($folder, $safeName, 'local');
-            $fileMime = $file->getMimeType();
+            // simpan file di disk 'documents'
+            $filePath = trim($folder . '/' . $safeName, '/');
+            $disk->put($filePath, file_get_contents($file->getRealPath()));
+
+            $fileMime = $file->getClientMimeType() ?: 'application/octet-stream';
             $checksum = hash_file('sha256', $file->getRealPath());
         }
 
         $version = new DocumentVersion();
-        $version->document_id   = $document->id;
-        $version->version_label = (string) $request->string('version_label');
-        $version->status        = 'draft';
-        $version->approval_stage = 'KABAG';
-        $version->created_by    = $userId;
+        $version->document_id    = $document->id;
+        $version->version_label  = (string) $request->string('version_label');
+        $version->status         = 'draft';
+        $version->approval_stage = 'KABAG'; // default initial stage
+        $version->created_by     = $userId;
 
         $version->file_path = $filePath;
         $version->file_mime = $fileMime;
@@ -126,21 +135,26 @@ class DocumentVersionController extends Controller
         $fileMime = $version->file_mime;
         $checksum = $version->checksum;
 
+        $disk = Storage::disk('documents');
+
         if ($request->hasFile('file')) {
             // hapus file lama jika ada
-            if ($version->file_path && Storage::disk('local')->exists($version->file_path)) {
-                Storage::disk('local')->delete($version->file_path);
+            if ($version->file_path && $disk->exists($version->file_path)) {
+                $disk->delete($version->file_path);
             }
 
             $file   = $request->file('file');
-            $folder = 'documents/' . ($version->document->doc_code ?: 'misc');
+            $folder = ($version->document->doc_code ?: 'misc') . '/' . now()->format('Ymd');
 
             $original = pathinfo($file->getClientOriginalName(), PATHINFO_FILENAME);
             $ext      = $file->getClientOriginalExtension();
-            $safeName = time() . '_' . Str::random(6) . '_' . Str::slug($original, '_') . ($ext ? ".{$ext}" : '');
+            $safeName = $this->safeFilename($original) . ($ext ? ".{$ext}" : '');
+            $safeName = now()->timestamp . '_' . Str::random(6) . '_' . $safeName;
 
-            $filePath = $file->storeAs($folder, $safeName, 'local');
-            $fileMime = $file->getMimeType();
+            $filePath = trim($folder . '/' . $safeName, '/');
+            $disk->put($filePath, file_get_contents($file->getRealPath()));
+
+            $fileMime = $file->getClientMimeType() ?: 'application/octet-stream';
             $checksum = hash_file('sha256', $file->getRealPath());
         }
 
@@ -197,13 +211,20 @@ class DocumentVersionController extends Controller
     /**
      * Submit versi untuk approval (KABAG -> MR)
      * Route name yang diharapkan: versions.submit
+     *
+     * Improved:
+     * - cek permission (kabag/admin)
+     * - cek status (hanya draft boleh submit)
+     * - set next stage sesuai role pengaju (KABAG -> MR, MR -> DIRECTOR, director -> DONE)
+     * - simpan submitted_by / submitted_at jika kolom ada
+     * - log ke approval_logs bila tersedia
      */
-    public function submitForApproval($id)
+    public function submitForApproval(Request $request, $id)
     {
         $user = Auth::user();
 
-        // Hanya kabag/admin yang boleh submit ke MR
-        if (! $user || ! method_exists($user, 'hasAnyRole') || ! $user->hasAnyRole(['kabag', 'admin'])) {
+        // permission check: kabag or admin (tolerant)
+        if (! $this->userHasAnyRole($user, ['kabag', 'admin'])) {
             return back()->with('error', 'Anda tidak memiliki izin untuk mengirimkan versi ini.');
         }
 
@@ -214,15 +235,151 @@ class DocumentVersionController extends Controller
             return back()->with('warning', 'Versi ini sudah final dan tidak dapat dikirim.');
         }
 
-        // Set status & stage ke MR
-        $version->status = 'submitted';
-        $version->approval_stage = 'MR';
-        // opsional: kapan dikirim
-        if (property_exists($version, 'submitted_at')) {
-            $version->submitted_at = now();
+        // hanya izinkan submit jika masih draft (atau sesuai kebijakan)
+        if ($version->status !== 'draft') {
+            return back()->with('error', 'Versi ini bukan berstatus draft dan tidak dapat disubmit lagi.');
         }
-        $version->save();
 
-        return back()->with('success', 'Dokumen telah dikirim ke MR untuk persetujuan.');
+        // tentukan next stage berdasarkan role user yang mengirim
+        $nextStage = 'MR';
+        if ($this->userHasAnyRole($user, ['mr'])) {
+            $nextStage = 'DIRECTOR';
+        } elseif ($this->userHasAnyRole($user, ['director'])) {
+            $nextStage = 'DONE';
+        }
+
+        DB::transaction(function () use ($version, $user, $nextStage) {
+            $version->status = 'submitted';
+            $version->approval_stage = $nextStage;
+
+            if (Schema::hasColumn('document_versions', 'submitted_by')) {
+                $version->submitted_by = $user->id;
+            }
+            if (Schema::hasColumn('document_versions', 'submitted_at')) {
+                $version->submitted_at = now();
+            }
+
+            $version->save();
+
+            // insert into approval_logs table if exists
+            $this->insertApprovalLog(
+                $version->id,
+                $user->id,
+                $this->getCurrentRoleName($user),
+                'submit',
+                'Submitted for approval to ' . $nextStage
+            );
+        });
+
+        return back()->with('success', 'Dokumen telah dikirim ke ' . $nextStage . ' untuk persetujuan.');
+    }
+
+    /* ----------------------
+       Helper functions
+       ---------------------- */
+
+    /**
+     * Cek apakah user punya salah satu role (tolerant: Spatie, relation, property)
+     */
+    protected function userHasAnyRole($user, array $roles): bool
+    {
+        if (! $user) return false;
+
+        // spatie:
+        if (method_exists($user, 'hasAnyRole')) {
+            try {
+                if ($user->hasAnyRole($roles)) return true;
+            } catch (\Throwable $e) {
+                // ignore
+            }
+        }
+
+        // relation roles()
+        if (method_exists($user, 'roles')) {
+            try {
+                $names = $user->roles()->pluck('name')->map(fn($n) => strtolower($n))->toArray();
+                foreach ($roles as $r) {
+                    if (in_array(strtolower($r), $names, true)) return true;
+                }
+            } catch (\Throwable $e) {
+                // ignore
+            }
+        }
+
+        // property roles collection
+        if (isset($user->roles) && is_iterable($user->roles)) {
+            $names = collect($user->roles)->pluck('name')->map(fn($n) => strtolower($n))->toArray();
+            foreach ($roles as $r) {
+                if (in_array(strtolower($r), $names, true)) return true;
+            }
+        }
+
+        // fallback whitelist by email (opsional)
+        $whitelist = [
+            'direktur@peroniks.com',
+            'adminqc@peroniks.com',
+        ];
+        if (! empty($user->email) && in_array(strtolower($user->email), $whitelist, true)) {
+            return true;
+        }
+
+        return false;
+    }
+
+    protected function getCurrentRoleName($user): string
+    {
+        if (! $user) return 'unknown';
+
+        if (method_exists($user, 'getRoleNames')) {
+            try {
+                $names = $user->getRoleNames()->toArray();
+                return $names[0] ?? 'unknown';
+            } catch (\Throwable $e) {
+                // ignore
+            }
+        }
+
+        if (method_exists($user, 'roles')) {
+            try {
+                return $user->roles()->pluck('name')->first() ?? 'unknown';
+            } catch (\Throwable $e) {
+                // ignore
+            }
+        }
+
+        if (isset($user->roles) && is_iterable($user->roles)) {
+            return collect($user->roles)->pluck('name')->first() ?? 'unknown';
+        }
+
+        return 'unknown';
+    }
+
+    /**
+     * Insert an approval log row if table exists.
+     */
+    protected function insertApprovalLog(int $versionId, int $userId, string $role, string $action, ?string $note = null): void
+    {
+        if (! Schema::hasTable('approval_logs')) {
+            return;
+        }
+
+        DB::table('approval_logs')->insert([
+            'document_version_id' => $versionId,
+            'user_id'             => $userId,
+            'role'                => $role,
+            'action'              => $action,
+            'note'                => $note,
+            'created_at'          => now(),
+            'updated_at'          => now(),
+        ]);
+    }
+
+    /**
+     * Amankan nama file (tanpa karakter aneh)
+     */
+    protected function safeFilename(string $original): string
+    {
+        $name = preg_replace('/[^\w\.\-]+/u', '_', $original);
+        return $name ?: ('file_' . Str::random(8));
     }
 }

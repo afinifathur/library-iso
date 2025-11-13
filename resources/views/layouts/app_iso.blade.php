@@ -91,7 +91,7 @@
             padding-bottom: 6px;
         }
 
-        /* USER BADGE */
+        /* USER MENU */
         .user-menu {
             position: relative;
         }
@@ -106,7 +106,7 @@
             text-transform: lowercase;
         }
 
-        .user-dropdown {
+        .dropdown-menu {
             display: none;
             position: absolute;
             right: 0;
@@ -115,22 +115,27 @@
             border: 1px solid #d1d5db;
             border-radius: 6px;
             min-width: 130px;
+            z-index: 1000;
         }
 
-        .user-dropdown a {
+        .dropdown-menu button,
+        .dropdown-menu a {
             display: block;
+            width: 100%;
             padding: 10px 14px;
             text-decoration: none;
             color: #333;
+            background: none;
+            border: none;
+            text-align: left;
+            cursor: pointer;
+            font-size: 14px;
         }
 
-        .user-dropdown a:hover {
+        .dropdown-menu a:hover,
+        .dropdown-menu button:hover {
             background: #f2f6ff;
             color: var(--brand);
-        }
-
-        .user-menu:hover .user-dropdown {
-            display: block;
         }
 
         /* PAGE WRAPPER */
@@ -162,37 +167,32 @@
             {{-- Menu --}}
             <nav class="menu">
                 <a href="{{ route('dashboard.index') }}" class="{{ request()->routeIs('dashboard') ? 'active' : '' }}">Dashboard</a>
-
                 <a href="{{ route('documents.index') }}" class="{{ request()->routeIs('documents.*') ? 'active' : '' }}">Documents</a>
-
                 <a href="{{ route('categories.index') }}" class="{{ request()->routeIs('categories.*') ? 'active' : '' }}">Kategori</a>
-
                 <a href="{{ route('departments.index') }}" class="{{ request()->routeIs('departments.*') ? 'active' : '' }}">Departemen</a>
-
                 <a href="{{ route('approval.index') }}" class="{{ request()->routeIs('approval.*') ? 'active' : '' }}">Approval Queue</a>
-
                 <a href="{{ route('revision.index') }}" class="{{ request()->routeIs('revision.*') ? 'active' : '' }}">Revision History</a>
-
                 <a href="{{ route('audit.index') }}" class="{{ request()->routeIs('audit.*') ? 'active' : '' }}">Audit Log</a>
             </nav>
 
             {{-- User --}}
-            <div class="user-menu">
+            <div class="user-menu dropdown">
 
                 @php
                     $email = strtolower(Auth::user()->email);
                     $username = explode('@', $email)[0];
                 @endphp
 
-                <button class="user-btn">{{ $username }}</button>
+                <button class="user-btn dropdown-toggle">
+                    {{ $username }} ▼
+                </button>
 
-                <div class="user-dropdown">
-                    <a href="#"
-                        onclick="event.preventDefault(); document.getElementById('logout-form').submit();">
-                        Logout
-                    </a>
-                    <form id="logout-form" method="POST" action="{{ route('logout') }}" style="display:none;">
+                <div class="dropdown-menu">
+                    <form method="POST" action="{{ route('logout') }}">
                         @csrf
+                        <button type="submit" class="dropdown-item text-danger">
+                            Logout
+                        </button>
                     </form>
                 </div>
 
@@ -207,6 +207,27 @@
             @yield('content')
         </div>
     </div>
+
+    {{-- Dropdown Script --}}
+    <script>
+        document.addEventListener("DOMContentLoaded", function () {
+            const toggle = document.querySelector(".dropdown-toggle");
+            const menu = document.querySelector(".dropdown-menu");
+
+            if (toggle && menu) {
+                toggle.addEventListener("click", function (e) {
+                    e.stopPropagation();
+                    menu.style.display = menu.style.display === "block" ? "none" : "block";
+                });
+            }
+
+            document.addEventListener("click", function (e) {
+                if (!e.target.closest(".dropdown")) {
+                    menu.style.display = "none";
+                }
+            });
+        });
+    </script>
 
 </body>
 </html>

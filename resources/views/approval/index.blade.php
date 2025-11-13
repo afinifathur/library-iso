@@ -1,148 +1,164 @@
-{{-- resources/views/approval/index.blade.php --}}
 @extends('layouts.iso')
 
 @section('title', 'Approval Queue')
 
 @section('content')
-<div class="container" style="max-width:1200px;margin:24px auto;">
-  <h2 class="mb-3">Approval Queue — {{ $stage ?? 'ALL' }}</h2>
+<div class="container page-card">
+    <div class="site-header">
+        <div class="brand">
+            <div class="logo">ISO</div>
+            <div class="brand-text">
+                <h1>Approval Queue</h1>
+                <div class="sub">Stage — {{ $stage ?? ($userRoleLabel ?? 'ALL') }}</div>
+            </div>
+        </div>
 
-  <div class="mb-4 d-flex gap-2">
-    <a href="{{ route('drafts.index') }}" class="btn btn-outline-secondary">Draft Container</a>
-    <a href="{{ route('approval.index') }}" class="btn btn-primary">Refresh</a>
-  </div>
+        <nav class="main-nav" aria-label="actions">
+            <a href="{{ route('drafts.index') }}" class="btn">Draft Container</a>
+            <a href="{{ route('approval.index') }}" class="btn btn-muted">Refresh</a>
+        </nav>
+    </div>
 
-  @if($pending->isEmpty())
-    <div class="card p-4">Tidak ada dokumen yang menunggu persetujuan.</div>
-  @else
-    <div class="card p-3 mb-3">
-      <div class="table-responsive">
-        <table class="table table-hover align-middle mb-0">
-          <thead>
-            <tr>
-              <th>Kode Dokumen</th>
-              <th>Judul</th>
-              <th>Departemen</th>
-              <th>Versi</th>
-              <th>Pengaju</th>
-              <th>When</th>
-              <th class="text-center">Aksi</th>
-            </tr>
-          </thead>
-          <tbody>
-            @foreach($pending as $ver)
-              <tr data-version-id="{{ $ver->id }}">
-                <td>
-                    <a href="{{ route('documents.show', $ver->document->id) }}" target="_blank" rel="noopener">
-                        {{ $ver->document->doc_code }}
-                    </a>
-                </td>
-                <td>{{ \Illuminate\Support\Str::limit($ver->document->title, 80) }}</td>
-                <td>{{ $ver->document->department->code ?? $ver->document->department->name ?? '-' }}</td>
-                <td>{{ $ver->version_label }}</td>
-                <td>{{ optional($ver->creator)->email ?? optional($ver->creator)->name ?? '-' }}</td>
-                <td>{{ $ver->created_at ? $ver->created_at->format('Y-m-d') : '-' }}</td>
-                <td class="text-center">
-                  {{-- Open: selalu aktif. Buka versi di tab baru --}}
-                  <a href="{{ route('versions.show', $ver->id) }}" target="_blank" rel="noopener"
-                     class="btn btn-sm btn-outline-primary action-open">Open</a>
+    {{-- actions above table: includes Compare selected --}}
+    <div class="mb-3" style="display:flex;gap:8px;align-items:center;">
+      <a href="{{ route('drafts.index') }}" class="btn">Draft Container</a>
+      <button class="btn btn-muted" onclick="location.reload()">Refresh</button>
 
-                  {{-- Compare --}}
-                  <a href="{{ route('documents.compare', [$ver->document->id, 'version' => $ver->id]) }}" target="_blank"
-                     class="btn btn-sm btn-outline-secondary">Compare</a>
+      <button id="compareSelectedBtn" class="btn btn-outline-secondary" style="margin-left:10px;">Compare selected</button>
+    </div>
 
-                  {{-- Approve (disabled until Open clicked) --}}
-                  <form action="{{ route('approval.approve', $ver->id) }}" method="POST"
-                        class="d-inline-block action-form-approve">
-                    @csrf
-                    <button type="submit" class="btn btn-sm btn-success action-approve" disabled>
-                      Approve
-                    </button>
-                  </form>
+    <div class="table-responsive card-section card-inner">
+        <table class="table" role="table" aria-label="Pending approvals">
+            <thead>
+                <tr>
+                    <th style="width:30px"><input id="selectAll" type="checkbox" aria-label="Select all versions"></th>
+                    <th>Kode Dokumen</th>
+                    <th>Judul</th>
+                    <th>Departemen</th>
+                    <th>Versi</th>
+                    <th>Pengaju</th>
+                    <th>When</th>
+                    <th style="width:270px">Aksi</th>
+                </tr>
+            </thead>
+            <tbody>
+                @php
+                    // accept multiple variable names from controller for compatibility
+                    $rows = $pendingVersions ?? $pending ?? collect();
+                @endphp
 
-                  {{-- Reject (disabled until Open clicked) --}}
-                  <button type="button"
-                          class="btn btn-sm btn-danger action-reject-btn"
-                          disabled
-                          data-bs-toggle="modal"
-                          data-bs-target="#rejectModal"
-                          data-version-id="{{ $ver->id }}"
-                          data-doc-code="{{ $ver->document->doc_code }}">
-                    Reject
-                  </button>
-                </td>
-              </tr>
-            @endforeach
-          </tbody>
+                @forelse($rows as $v)
+                    <tr data-version-id="{{ $v->id }}" data-doc-id="{{ $v->document->id ?? $v->document_id }}">
+                        <td>
+                            <input class="select-version" type="checkbox" value="{{ $v->id }}" data-doc="{{ $v->document->id ?? $v->document_id }}">
+                        </td>
+
+                        <td>
+                            <a href="{{ route('documents.show', $v->document->id ?? $v->document_id) }}" target="_blank" rel="noopener">
+                                {{ $v->document->doc_code ?? ($v->document_code ?? '-') }}
+                            </a>
+                        </td>
+
+                        <td>{{ \Illuminate\Support\Str::limit($v->document->title ?? ($v->title ?? '-'), 120) }}</td>
+                        <td>{{ $v->document->department->code ?? $v->document->department->name ?? '-' }}</td>
+                        <td>{{ $v->version_label ?? ($v->label ?? '-') }}</td>
+                        <td>{{ optional($v->creator ?? $v->created_by_user)->email ?? optional($v->creator ?? $v->created_by_user)->name ?? '-' }}</td>
+                        <td>{{ optional($v->created_at)->format('Y-m-d') ?? '-' }}</td>
+
+                        <td>
+                            <div class="action-buttons">
+                                <!-- Open (always enabled) -->
+                                <a href="{{ route('versions.show', $v->id) }}" target="_blank" class="btn btn-outline-primary btn-sm action-open">Open</a>
+
+                                <!-- Compare (single) -->
+                                <a href="{{ route('documents.compare', $v->document->id ?? $v->document_id ?? 0) }}?version={{ $v->id }}" target="_blank" class="btn btn-outline-secondary btn-sm action-compare">Compare</a>
+
+                                <!-- Approve (form) -->
+                                <form method="POST" action="{{ route('approval.approve', $v->id) }}" class="d-inline-block action-form-approve" style="display:inline">
+                                    @csrf
+                                    <button type="submit" class="btn btn-success btn-sm btn-approve" disabled>Approve</button>
+                                </form>
+
+                                <!-- Reject (open modal) -->
+                                <button type="button"
+                                        class="btn btn-danger btn-sm btn-reject"
+                                        disabled
+                                        data-version-id="{{ $v->id }}"
+                                        data-doc-code="{{ $v->document->doc_code ?? '' }}">
+                                    Reject
+                                </button>
+                            </div>
+                        </td>
+                    </tr>
+                @empty
+                    <tr>
+                        <td colspan="8" class="small-muted">Tidak ada versi yang menunggu persetujuan.</td>
+                    </tr>
+                @endforelse
+            </tbody>
         </table>
-      </div>
     </div>
 
-    <div class="d-flex justify-content-end">
-      {{ $pending->links() }}
+    <div class="d-flex justify-content-end" style="margin-top:12px">
+        @if(method_exists($rows, 'links')) {{ $rows->links() }} @endif
     </div>
-  @endif
 </div>
 
-{{-- Reject Modal (Bootstrap 5) --}}
-<div class="modal fade" id="rejectModal" tabindex="-1" aria-labelledby="rejectModalLabel" aria-hidden="true">
-  <div class="modal-dialog modal-md">
-    <form id="rejectForm" method="POST" action="">
-      @csrf
-      <div class="modal-content">
-        <div class="modal-header">
-          <h5 class="modal-title" id="rejectModalLabel">Reject Version <span id="rejectDocCode" class="fw-bold"></span></h5>
-          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-        </div>
+<!-- Reject Modal (custom) -->
+<div id="rejectModal" class="modal-overlay" aria-hidden="true" style="display:none;">
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="rejectModalTitle">
+    <div class="modal-header">
+      <h3 id="rejectModalTitle">Alasan Reject <span id="rejectDocCode" class="fw-bold"></span></h3>
+      <button class="modal-close" type="button" onclick="closeRejectModal()" aria-label="Close">×</button>
+    </div>
 
-        <div class="modal-body">
-          <div class="mb-2">Alasan reject <small class="text-muted">(wajib diisi)</small></div>
-          <textarea name="reason" id="rejectNotes" class="form-control" rows="5" required></textarea>
-          <input type="hidden" id="rejectVersionId" name="version_id" value="">
+    <div class="modal-body">
+      <form id="rejectForm" onsubmit="return false;">
+        <div class="form-row">
+          <label for="reject_reason">Alasan reject <small class="text-muted">(wajib diisi)</small></label>
+          <textarea id="reject_reason" name="reason" class="form-textarea" rows="6" required></textarea>
         </div>
+        <input type="hidden" id="reject_version_id" name="version_id" value="">
+      </form>
+    </div>
 
-        <div class="modal-footer">
-          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Batal</button>
-          <button type="submit" id="rejectSubmitBtn" class="btn btn-danger">Submit Reject</button>
-        </div>
-      </div>
-    </form>
+    <div class="modal-footer">
+      <button class="btn btn-muted" type="button" onclick="closeRejectModal()">Batal</button>
+      <button id="rejectSubmitBtn" class="btn btn-danger" type="button">Submit Reject</button>
+    </div>
   </div>
 </div>
 @endsection
 
-@push('scripts')
+@section('footerscripts')
 <script>
-document.addEventListener('DOMContentLoaded', function () {
-  // track opened versions
+(() => {
+  // Track opened versions
   const opened = new Set();
 
-  // When Open is clicked (it opens in a new tab), mark version as opened and enable actions
-  document.querySelectorAll('.action-open').forEach(btn => {
-    btn.addEventListener('click', function () {
+  // Helper to enable action buttons in a row
+  function enableRowActions(tr) {
+    if (!tr) return;
+    tr.querySelectorAll('.btn-approve, .btn-reject').forEach(btn => btn.removeAttribute('disabled'));
+  }
+
+  // --- Open link handling: mark version opened and enable row actions ---
+  document.querySelectorAll('.action-open').forEach(a => {
+    a.addEventListener('click', function () {
       const tr = this.closest('tr');
-      if (!tr) return;
-      const vid = tr.dataset.versionId;
+      const vid = tr?.dataset?.versionId;
       if (!vid) return;
-      // mark as opened
       opened.add(String(vid));
-      // enable action buttons for this row after a short delay (user might cancel popup blockers)
-      setTimeout(() => enableActionsForRow(tr), 200);
-      // allow default behavior (open new tab)
+      // small delay to allow browser tab opening
+      setTimeout(() => enableRowActions(tr), 300);
     });
   });
 
-  function enableActionsForRow(tr) {
-    tr.querySelectorAll('.action-approve, .action-reject-btn').forEach(el => {
-      el.removeAttribute('disabled');
-    });
-  }
-
-  // Prevent Approve form submit if not opened yet
+  // --- Approve: prevent submit unless version opened ---
   document.querySelectorAll('.action-form-approve').forEach(form => {
     form.addEventListener('submit', function (e) {
       const tr = this.closest('tr');
-      const vid = tr?.dataset.versionId;
+      const vid = tr?.dataset?.versionId;
       if (!vid || !opened.has(String(vid))) {
         e.preventDefault();
         alert('Silakan buka dokumen (Open) terlebih dahulu sebelum menyetujui.');
@@ -152,47 +168,46 @@ document.addEventListener('DOMContentLoaded', function () {
     });
   });
 
-  // Setup reject modal: fill fields when modal shown (Bootstrap 5 event)
-  const rejectModalEl = document.getElementById('rejectModal');
-  if (rejectModalEl) {
-    rejectModalEl.addEventListener('show.bs.modal', function (event) {
-      const button = event.relatedTarget;
-      if (!button) return;
-      const versionId = button.getAttribute('data-version-id');
-      const docCode = button.getAttribute('data-doc-code');
-      const tr = button.closest('tr');
-
-      // Ensure the row was opened first
-      if (!versionId || !opened.has(String(versionId))) {
-        // Prevent modal from showing and warn
-        event.preventDefault();
-        // Using Bootstrap modal event, we need to hide immediately if shown; but preventDefault should stop.
+  // --- Reject: require opened, then open modal ---
+  document.querySelectorAll('.btn-reject').forEach(btn => {
+    btn.addEventListener('click', function () {
+      const tr = this.closest('tr');
+      const vid = tr?.dataset?.versionId;
+      const docCode = this.getAttribute('data-doc-code') || '';
+      if (!vid || !opened.has(String(vid))) {
         alert('Silakan buka dokumen (Open) terlebih dahulu sebelum menolak.');
         return;
       }
-
-      // fill modal
-      document.getElementById('rejectVersionId').value = versionId || '';
-      document.getElementById('rejectDocCode').innerText = docCode || '';
-      document.getElementById('rejectNotes').value = '';
-
-      // set form action (AJAX will use url, but setting action helps fallback)
-      const form = document.getElementById('rejectForm');
-      if (form) {
-        // route: /approval/{version}/reject
-        form.action = "{{ url('/approval') }}/" + encodeURIComponent(versionId) + "/reject";
-      }
+      document.getElementById('reject_version_id').value = vid;
+      document.getElementById('rejectDocCode').innerText = docCode ? `(${docCode})` : '';
+      document.getElementById('reject_reason').value = '';
+      showRejectModal();
     });
-  }
+  });
 
-  // Submit reject via AJAX to keep page responsive
-  const rejectForm = document.getElementById('rejectForm');
-  if (rejectForm) {
-    rejectForm.addEventListener('submit', function (e) {
-      e.preventDefault();
+  // --- Modal controls ---
+  window.showRejectModal = function () {
+    const el = document.getElementById('rejectModal');
+    if (!el) return;
+    el.style.display = 'flex';
+    el.setAttribute('aria-hidden', 'false');
+    setTimeout(() => document.getElementById('reject_reason').focus(), 50);
+  };
+  window.closeRejectModal = function () {
+    const el = document.getElementById('rejectModal');
+    if (!el) return;
+    el.style.display = 'none';
+    el.setAttribute('aria-hidden', 'true');
+  };
 
-      const vid = document.getElementById('rejectVersionId').value;
-      const reason = document.getElementById('rejectNotes').value.trim();
+  // --- Submit reject via fetch (AJAX) ---
+  const rejectBtn = document.getElementById('rejectSubmitBtn');
+  if (rejectBtn) {
+    rejectBtn.addEventListener('click', function () {
+      const btn = this;
+      const vid = document.getElementById('reject_version_id').value;
+      const reason = document.getElementById('reject_reason').value.trim();
+
       if (!reason) {
         alert('Alasan reject wajib diisi.');
         return;
@@ -202,53 +217,87 @@ document.addEventListener('DOMContentLoaded', function () {
         return;
       }
 
-      const submitBtn = document.getElementById('rejectSubmitBtn');
-      submitBtn.disabled = true;
-      submitBtn.innerText = 'Submitting...';
+      btn.disabled = true;
+      btn.innerText = 'Submitting...';
 
-      // build url (matches route /approval/{version}/reject)
-      const url = "{{ url('/approval') }}/" + encodeURIComponent(vid) + "/reject";
-
-      fetch(url, {
+      fetch("{{ url('/approval') }}/" + encodeURIComponent(vid) + "/reject", {
         method: 'POST',
         headers: {
-          'X-CSRF-TOKEN': '{{ csrf_token() }}',
           'Content-Type': 'application/json',
-          'Accept': 'application/json'
+          'Accept': 'application/json',
+          'X-CSRF-TOKEN': '{{ csrf_token() }}'
         },
-        body: JSON.stringify({ reason })
+        body: JSON.stringify({ notes: reason })
       })
-      .then(async res => {
-        const contentType = res.headers.get('content-type') || '';
-        let data = {};
-        if (contentType.includes('application/json')) {
-          data = await res.json();
-        } else {
-          data = { success: res.ok };
-        }
+      .then(async r => {
+        const ct = r.headers.get('content-type') || '';
+        let payload = {};
+        if (ct.includes('application/json')) payload = await r.json();
+        else payload = { success: r.ok };
 
-        if (res.ok && (data.success === undefined || data.success)) {
-          // close modal (Bootstrap)
-          const bsModal = bootstrap.Modal.getInstance(document.getElementById('rejectModal'));
-          if (bsModal) bsModal.hide();
-          alert(data.message || 'Version berhasil direject.');
-          // reload page to reflect changes
+        if (r.ok && (payload.success === undefined || payload.success)) {
+          closeRejectModal();
+          alert(payload.message || 'Version berhasil direject.');
           window.location.reload();
         } else {
-          throw new Error(data.message || 'Gagal menolak versi.');
+          throw new Error(payload.message || 'Gagal menolak versi.');
         }
       })
       .catch(err => {
         console.error(err);
-        alert(err.message || 'Terjadi error saat reject. Cek console.');
+        alert(err.message || 'Terjadi error. Cek console.');
       })
       .finally(() => {
-        submitBtn.disabled = false;
-        submitBtn.innerText = 'Submit Reject';
+        btn.disabled = false;
+        btn.innerText = 'Submit Reject';
       });
     });
   }
 
-});
+  // --- Select All / Compare Selected functionality ---
+  const selectAll = document.getElementById('selectAll');
+  const compareBtn = document.getElementById('compareSelectedBtn');
+
+  if (selectAll) {
+    selectAll.addEventListener('change', function (e) {
+      document.querySelectorAll('.select-version').forEach(ch => ch.checked = e.target.checked);
+    });
+  }
+
+  if (compareBtn) {
+    compareBtn.addEventListener('click', function () {
+      const checked = Array.from(document.querySelectorAll('.select-version:checked'));
+      if (checked.length < 2) {
+        alert('Pilih minimal 2 versi dari dokumen yang sama untuk membandingkan.');
+        return;
+      }
+
+      // ensure all selected versions belong to same document
+      const docs = checked.map(c => c.dataset.doc);
+      const firstDoc = docs[0];
+      const allSame = docs.every(d => d === firstDoc);
+      if (!allSame) {
+        alert('Silakan pilih versi yang berasal dari DOKUMEN yang SAMA untuk membandingkan.');
+        return;
+      }
+
+      const versionIds = checked.map(c => c.value);
+      // build url: /documents/{docId}/compare?versions[]=7&versions[]=8
+      const base = "{{ url('/documents') }}/";
+      const url = new URL(base + encodeURIComponent(firstDoc) + "/compare", window.location.origin);
+      versionIds.forEach(id => url.searchParams.append('versions[]', id));
+      window.open(url.toString(), '_blank');
+    });
+  }
+
+  // --- Escape key closes modal ---
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') {
+      const modal = document.getElementById('rejectModal');
+      if (modal && modal.style.display === 'flex') closeRejectModal();
+    }
+  });
+
+})();
 </script>
-@endpush
+@endsection

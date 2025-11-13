@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -9,6 +10,8 @@ use InvalidArgumentException;
 
 class Document extends Model
 {
+    use HasFactory;
+
     protected $fillable = [
         'doc_code',
         'category',        // IK, UT, FR, ...
@@ -22,6 +25,8 @@ class Document extends Model
 
     /**
      * Cast tanggal & angka.
+     *
+     * @var array
      */
     protected $casts = [
         'created_at'    => 'datetime',
@@ -30,8 +35,14 @@ class Document extends Model
         'doc_number'    => 'integer',
     ];
 
+    /* -------------------------
+     | Relationships
+     |------------------------- */
+
     /**
      * Relasi ke Department.
+     *
+     * @return BelongsTo
      */
     public function department(): BelongsTo
     {
@@ -39,7 +50,20 @@ class Document extends Model
     }
 
     /**
+     * Relasi ke Category (jika ada model Category terpisah).
+     *
+     * @return BelongsTo|null
+     */
+    public function categoryRelation(): ?BelongsTo
+    {
+        // gunakan nama method lain (categoryRelation) agar tidak bentrok dengan kolom 'category'
+        return $this->belongsTo(Category::class, 'category', 'code');
+    }
+
+    /**
      * Semua versi dokumen.
+     *
+     * @return HasMany
      */
     public function versions(): HasMany
     {
@@ -48,11 +72,17 @@ class Document extends Model
 
     /**
      * Versi terbaru (latest).
+     *
+     * @return \Illuminate\Database\Eloquent\Relations\HasOne
      */
     public function currentVersion()
     {
         return $this->hasOne(DocumentVersion::class)->latestOfMany();
     }
+
+    /* -------------------------
+     | Doc code generation
+     |------------------------- */
 
     /**
      * Generate doc_code dari category + department code + next number.
@@ -112,10 +142,15 @@ class Document extends Model
                 $dept = Department::find($doc->department_id);
 
                 if ($dept) {
-                    $doc->doc_code = static::generateDocCode($doc->category, $dept->code);
+                    try {
+                        $doc->doc_code = static::generateDocCode($doc->category, $dept->code);
+                    } catch (InvalidArgumentException $e) {
+                        // jika department code invalid, biarkan fail secara tenang (caller bisa menangani)
+                        // tidak meng-throw agar operasi create tidak crash unexpectedly
+                    }
 
                     // set doc_number jika belum ada (ambil dari tail number doc_code)
-                    if (empty($doc->doc_number) && preg_match('/(\d{1,})$/', $doc->doc_code, $m)) {
+                    if (empty($doc->doc_number) && !empty($doc->doc_code) && preg_match('/(\d{1,})$/', $doc->doc_code, $m)) {
                         $doc->doc_number = (int) $m[1];
                     }
                 }
