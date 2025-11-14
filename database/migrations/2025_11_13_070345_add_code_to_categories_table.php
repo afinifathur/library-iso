@@ -4,31 +4,21 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
-return new class extends Migration
-{
-    /**
-     * Tambah kolom "code" ke tabel categories
-     */
-    public function up(): void
+return new class extends Migration {
+    public function up()
     {
         Schema::table('categories', function (Blueprint $table) {
             if (!Schema::hasColumn('categories', 'code')) {
-                $table->string('code', 20)
-                    ->after('id')
-                    ->unique()
-                    ->index()
-                    ->comment('Kode kategori seperti IK, UT, FR, DP, DE');
+                $table->string('code', 64)->nullable()->after('id')->index();
             }
         });
     }
 
-    /**
-     * Hapus kolom "code" jika rollback
-     */
-    public function down(): void
+    public function down()
     {
         Schema::table('categories', function (Blueprint $table) {
             if (Schema::hasColumn('categories', 'code')) {
+                $table->dropIndex(['code']);
                 $table->dropColumn('code');
             }
         });

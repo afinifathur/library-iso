@@ -3,161 +3,266 @@
 namespace App\Console\Commands;
 
 use Illuminate\Console\Command;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
-use League\Csv\Reader;
+use Illuminate\Support\Str;
+use PhpOffice\PhpWord\IOFactory as WordIO;
+use Smalot\PdfParser\Parser as PdfParser;
 use App\Models\Document;
 use App\Models\DocumentVersion;
-use App\Models\Department;
 use App\Models\Category;
-use App\Models\User;
+use App\Models\Department;
 use Carbon\Carbon;
+use DB;
 
 class ImportDocuments extends Command
 {
-    protected $signature = 'import:documents {manifest=storage/app/imports/import_manifest.csv} {--dry-run}';
-    protected $description = 'Import documents and versions from CSV manifest + files in storage/app/imports';
+    protected $signature = 'import:documents
+                            {--path=imports : relative path from project root to import folder}
+                            {--approve : mark imported versions as approved}
+                            {--dry : dry-run (do not write DB / files)}
+                            {--batch=10 : files per batch (throttle)}';
+
+    protected $description = 'Import documents from local folders (docx/pdf) into system';
 
     public function handle()
     {
-        $manifestPath = $this->argument('manifest');
-        $dryRun = $this->option('dry-run');
-
-        if (!file_exists($manifestPath)) {
-            $this->error("Manifest not found: {$manifestPath}");
+        $path = base_path($this->option('path'));
+        if (!is_dir($path)) {
+            $this->error("Path not found: $path");
             return 1;
         }
 
-        $this->info("Reading manifest: {$manifestPath}");
-        $csv = Reader::createFromPath($manifestPath, 'r');
-        $csv->setHeaderOffset(0);
-        $records = $csv->getRecords();
+        $files = $this->gatherFiles($path);
+        $total = count($files);
+        $this->info("Found $total file(s) to process.");
 
-        $row = 0;
-        foreach ($records as $rec) {
-            $row++;
-            DB::beginTransaction();
+        $dry = $this->option('dry');
+        $approve = $this->option('approve');
+        $batch = (int)$this->option('batch');
+
+        $counter = 0;
+        foreach ($files as $row) {
+            $counter++;
+            [$filePath, $deptCode] = $row;
+            $this->line("[$counter/$total] Processing: $filePath (folder dept: $deptCode)");
+
             try {
-                $docCode = trim($rec['doc_code'] ?? '');
-                $title   = trim($rec['title'] ?? 'No title');
-                $deptCode = trim($rec['department_code'] ?? '');
-                $catCode = trim($rec['category_code'] ?? '');
-                $masterFn = trim($rec['master_filename'] ?? '');
-                $pdfFn = trim($rec['signed_pdf_filename'] ?? '');
-                $pastedText = $rec['pasted_text'] ?? null;
-                $versionLabel = trim($rec['version_label'] ?? 'v1');
-                $creatorEmail = trim($rec['created_by_email'] ?? null);
-                $status = trim($rec['status'] ?? 'draft');
-                $signedAt = trim($rec['signed_at'] ?? null);
+                // attempt parse file name to get doc_code and title
+                $basename = pathinfo($filePath, PATHINFO_BASENAME);
+                // Expected patterns:
+                // IK.QA-FL.01 SPEKTROMETER.docx
+                // or SPEKTROMETER.docx (then rely on parent folder for dept)
+                $nameOnly = pathinfo($filePath, PATHINFO_FILENAME);
+                // split by first space => left could be doc_code
+                $parts = preg_split('/\s+/', $nameOnly, 2);
+                $maybeCode = strtoupper($parts[0]);
+                $title = isset($parts[1]) ? $parts[1] : $nameOnly;
 
-                // Department
-                $department = null;
-                if ($deptCode) {
-                    $department = Department::where('code', $deptCode)->first();
-                    if (!$department) {
-                        $this->warn("Row {$row}: Department {$deptCode} not found — creating placeholder.");
-                        if (!$dryRun) {
-                            $department = Department::create(['code'=>$deptCode,'name'=>$deptCode]);
-                        }
-                    }
+                $doc_code = null;
+                if (preg_match('/^[A-Z]{1,5}\./', $maybeCode) || strpos($maybeCode, '.') !== false) {
+                    // looks like code
+                    $doc_code = $maybeCode;
                 }
 
-                // Category (optional)
+                // guess category code from doc_code (prefix before dot)
                 $category = null;
-                if ($catCode) {
-                    $category = Category::where('code', $catCode)->first();
-                    if (!$category) {
-                        $this->warn("Row {$row}: Category {$catCode} not found — creating placeholder.");
-                        if (!$dryRun) {
-                            $category = Category::create(['code'=>$catCode,'name'=>$catCode]);
-                        }
-                    }
+                if ($doc_code) {
+                    $catPrefix = strtoupper(explode('.', $doc_code)[0]);
+                    $category = Category::where('code', $catPrefix)->first();
                 }
 
-                // Creator
-                $creator = null;
-                if ($creatorEmail) {
-                    $creator = User::where('email', $creatorEmail)->first();
-                    if (!$creator) {
-                        $this->warn("Row {$row}: user {$creatorEmail} not found — using admin (or null).");
-                        $creator = User::first(); // fallback
+                // guess department: either given by parent folder or from doc_code 2nd segment
+                $department = null;
+                if ($doc_code) {
+                    $seg = explode('.', $doc_code);
+                    if (isset($seg[1])) {
+                        $deptGuess = strtoupper($seg[1]); // e.g. QA-FL
+                        $department = Department::where('code', $deptGuess)->first();
                     }
+                }
+                if (!$department && $deptCode) {
+                    $department = Department::where('code', $deptCode)->first();
+                }
+
+                // fallback: first department
+                if (!$department) {
+                    $department = Department::first();
+                }
+
+                // set category id (nullable)
+                $category_id = $category ? $category->id : null;
+
+                // read text depending on extension
+                $ext = strtolower(pathinfo($filePath, PATHINFO_EXTENSION));
+                $plain_text = null;
+                if (in_array($ext, ['docx','doc'])) {
+                    $plain_text = $this->extractTextFromDocx($filePath);
+                } elseif ($ext === 'pdf') {
+                    $plain_text = $this->extractTextFromPdf($filePath);
                 } else {
-                    $creator = User::first();
+                    $plain_text = '';
                 }
 
-                // Create or find Document
-                $document = Document::where('doc_code', $docCode)->first();
-                if (!$document) {
-                    $this->info("Row {$row}: creating Document {$docCode}");
-                    if (!$dryRun) {
-                        $document = Document::create([
-                            'doc_code' => $docCode,
-                            'title' => $title,
-                            'department_id' => $department ? $department->id : null,
-                            'category_id' => $category ? $category->id : null,
-                        ]);
-                    }
+                // in dry-run mode, just print summary
+                if ($dry) {
+                    $this->info("[DRY] would create Document: code={$doc_code} title={$title} dept={$department->code} cat={$category?->code}");
+                    continue;
+                }
+
+                DB::beginTransaction();
+
+                // create or find document by doc_code (or title)
+                if ($doc_code) {
+                    $document = Document::firstOrCreate(
+                        ['doc_code' => $doc_code],
+                        ['title' => $title,
+                         'department_id' => $department->id ?? null,
+                         'category_id' => $category_id]
+                    );
                 } else {
-                    $this->info("Row {$row}: found existing Document {$docCode} (id {$document->id})");
-                    // optional: update title/props
+                    // try by title
+                    $document = Document::firstOrCreate(
+                        ['title' => $title],
+                        ['doc_code' => null,
+                         'department_id' => $department->id ?? null,
+                         'category_id' => $category_id]
+                    );
                 }
 
-                // Prepare file paths
-                $signedFilePath = null;
-                if ($pdfFn) {
-                    $signedFull = storage_path("app/imports/signed/{$pdfFn}");
-                    if (!file_exists($signedFull)) {
-                        $this->warn("Row {$row}: signed PDF {$pdfFn} not found at imports/signed/ — skipping PDF.");
-                    } else {
-                        // copy to public storage (or keep in storage and link)
-                        $dest = "documents/".date('Y/m')."/".basename($pdfFn);
-                        if (!$dryRun) {
-                            Storage::disk('public')->putFileAs(dirname($dest), new \Illuminate\Http\File($signedFull), basename($dest));
-                        }
-                        $signedFilePath = 'storage/'.$dest; // or use Storage::url(...)
-                    }
+                // store master file to storage/app/documents/{document_id}/filename
+                $storagePath = "documents/{$document->id}";
+                $fileName = preg_replace('/[^A-Za-z0-9\-\._ ]/','_', $basename);
+                $diskPath = $storagePath . '/' . $fileName;
+                // ensure directory
+                Storage::disk('local')->putFileAs($storagePath, $filePath, $fileName);
+
+                // create version record
+                $versionLabel = 'v1';
+                // find last version number
+                $last = $document->versions()->orderBy('id','desc')->first();
+                if ($last && preg_match('/v(\d+)/i', $last->version_label, $m)) {
+                    $versionLabel = 'v' . (intval($m[1]) + 1);
                 }
 
-                // checksum if file present
-                $checksum = null;
-                if ($signedFilePath && !$dryRun) {
-                    $realPath = public_path($signedFilePath);
-                    if (file_exists($realPath)) {
-                        $checksum = substr(hash_file('sha256', $realPath), 0, 40);
-                    }
-                }
+                $status = $approve ? 'approved' : 'draft';
+                $approval_stage = $approve ? 'DONE' : 'KABAG';
 
-                // create version
-                $this->info("Row {$row}: creating version {$versionLabel} for document {$docCode}");
-                if (!$dryRun) {
-                    $vdata = [
-                        'document_id' => $document->id,
-                        'version_label' => $versionLabel,
-                        'status' => $status,
-                        'created_by' => $creator->id ?? null,
-                        'file_path' => $signedFilePath ? $signedFilePath : null,
-                        'file_mime' => $signedFilePath ? mime_content_type(public_path($signedFilePath)) : null,
-                        'checksum' => $checksum,
-                        'change_note' => $rec['change_note'] ?? null,
-                        'signed_by' => $rec['signed_by'] ?? null,
-                        'signed_at' => $signedAt ? Carbon::parse($signedAt) : null,
-                        'plain_text' => $pastedText ? null : null, // keep null if we want extraction later
-                        'pasted_text' => $pastedText ? $pastedText : null,
-                    ];
-                    $version = DocumentVersion::create($vdata);
-                }
+                $version = DocumentVersion::create([
+                    'document_id' => $document->id,
+                    'version_label' => $versionLabel,
+                    'status' => $status,
+                    'created_by' => 1, // you may change default uploader id
+                    'file_path' => $diskPath,
+                    'file_mime' => mime_content_type($filePath) ?: null,
+                    'checksum' => substr(hash('sha256', file_get_contents($filePath)),0,40),
+                    'change_note' => 'Imported via batch',
+                    'signed_by' => null,
+                    'signed_at' => null,
+                    'plain_text' => $plain_text,
+                    'pasted_text' => $plain_text,
+                    'created_at' => Carbon::now(),
+                    'updated_at' => Carbon::now(),
+                    'approval_stage' => $approval_stage,
+                ]);
 
                 DB::commit();
+
+                $this->info("Imported -> Document#{$document->id} Version#{$version->id} ({$versionLabel})");
+
             } catch (\Exception $e) {
                 DB::rollBack();
-                $this->error("Row {$row} FAILED: ".$e->getMessage());
-                // optionally continue or stop
-                continue;
+                $this->error("Error importing $filePath : " . $e->getMessage());
+            }
+
+            // throttle per batch
+            if ($counter % $batch === 0) {
+                $this->info("Processed $counter items, sleeping 2s...");
+                sleep(2);
             }
         }
 
-        $this->info("Import completed.");
+        $this->info("Done. Processed $counter files.");
         return 0;
+    }
+
+    protected function gatherFiles($path)
+    {
+        $rows = [];
+        // iterate department folders (first-level)
+        $entries = array_filter(scandir($path), function($n){ return $n !== '.' && $n !== '..'; });
+        foreach ($entries as $entry) {
+            $full = rtrim($path, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $entry;
+            if (is_dir($full)) {
+                $files = glob($full . DIRECTORY_SEPARATOR . '*.{docx,doc,pdf}', GLOB_BRACE);
+                foreach ($files as $f) {
+                    $rows[] = [$f, $entry]; // pass dept folder name
+                }
+            } else {
+                // files in root imports folder
+                if (preg_match('/\.(docx|doc|pdf)$/i', $full)) {
+                    $rows[] = [$full, null];
+                }
+            }
+        }
+        return $rows;
+    }
+
+    protected function extractTextFromDocx($file)
+    {
+        try {
+            // phpword can read docx, but for plain extraction we attempt to parse sections
+            $phpWord = WordIO::load($file);
+            $text = '';
+            foreach ($phpWord->getSections() as $section) {
+                $elements = $section->getElements();
+                foreach ($elements as $el) {
+                    if (method_exists($el, 'getText')) {
+                        $text .= $el->getText() . "\n";
+                    } elseif (property_exists($el, 'text')) {
+                        $text .= $el->text . "\n";
+                    }
+                }
+            }
+            if (trim($text) === '') {
+                // fallback: try open as zip and extract document.xml
+                $text = $this->extractDocxViaXml($file);
+            }
+            return trim($text);
+        } catch (\Throwable $e) {
+            return $this->extractDocxViaXml($file);
+        }
+    }
+
+    protected function extractDocxViaXml($file)
+    {
+        try {
+            $zip = new \ZipArchive();
+            $res = $zip->open($file);
+            if ($res === true) {
+                $index = $zip->locateName('word/document.xml');
+                if ($index !== false) {
+                    $xml = $zip->getFromIndex($index);
+                    $zip->close();
+                    $xml = preg_replace('/<w:.*?>|<\/w:.*?>/','',$xml);
+                    $xml = strip_tags($xml);
+                    return trim(preg_replace("/\s+/", ' ', $xml));
+                }
+            }
+            return '';
+        } catch (\Throwable $e) {
+            return '';
+        }
+    }
+
+    protected function extractTextFromPdf($file)
+    {
+        try {
+            $parser = new PdfParser();
+            $pdf    = $parser->parseFile($file);
+            $text = $pdf->getText();
+            return trim($text);
+        } catch (\Throwable $e) {
+            return '';
+        }
     }
 }
