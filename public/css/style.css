@@ -440,6 +440,24 @@ button[disabled] {
     opacity: 0.55;
     pointer-events: none;
 }
+.line {
+    padding: 4px 8px;
+    white-space: pre-wrap;
+    font-family: ui-sans-serif, system-ui;
+}
+.line.added {
+    background: #ecfdf5;
+    color: #065f46;
+}
+.line.removed {
+    background: #fff1f2;
+    color: #9f1239;
+    text-decoration: line-through;
+}
+.line.same {
+    background: transparent;
+    color: #111827;
+}
 
 /* ---------- LEGACY / OLDER BROWSER NOTES ----------
    - CSS variables are used; for very old browsers that do not support them, values will fall back

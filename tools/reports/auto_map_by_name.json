@@ -1,0 +1,477 @@
+﻿[
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\ACC \u0026 FIN\\UT.ACC\u0026FIN.01 MANAJ. ACC \u0026 FINANCE.doc",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\ACC \u0026 FIN\\UT.ACC\u0026FIN.01 MANAJ. ACC \u0026 FINANCE.pdf",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\DIR\\UT.DIR.01.DIREKTUR.doc",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\DIR\\UT.DIR.01.DIREKTUR.pdf",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\DIR\\UT.DIR.02.MR.doc",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\DIR\\UT.DIR.02.MR.pdf",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\DIR\\UT.DIR.03.DOCUMENT CONTROLLER.doc",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\DIR\\UT.DIR.03.DOCUMENT CONTROLLER.pdf",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\MKT-EXIM\\PJM.MKT-EXIM.01.PENERIMAAN ORDER.doc",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\MKT-EXIM\\PJM.MKT-EXIM.01.PENERIMAAN ORDER.pdf",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\MKT-EXIM\\PJM.MKT-EXIM.02.PENILAIAN KEPUASAN PELANGGAN.doc",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\MKT-EXIM\\PJM.MKT-EXIM.02.PENILAIAN KEPUASAN PELANGGAN.pdf",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\MKT-EXIM\\PJM.MKT-EXIM.03.PENGUKURAN EKSPORT DAN IMPORT.doc",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\MKT-EXIM\\PJM.MKT-EXIM.03.PENGUKURAN EKSPORT DAN IMPORT.pdf",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\MKT-EXIM\\PJM.MKT-EXIM.04.PENGIRIMAN BARANG JADI.doc",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\MKT-EXIM\\PJM.MKT-EXIM.04.PENGIRIMAN BARANG JADI.pdf",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\MKT-EXIM\\UT.MKT.EXIM.01.MARKETING \u0026 EXIM.doc",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\MKT-EXIM\\UT.MKT.EXIM.01.MARKETING \u0026 EXIM.pdf",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\MKT-EXIM\\UT.MKT.EXIM.02.MARKETING.doc",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\MKT-EXIM\\UT.MKT.EXIM.02.MARKETING.pdf",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\MKT-EXIM\\UT.MKT.EXIM.03.EXIM.doc",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\MKT-EXIM\\UT.MKT.EXIM.03.EXIM.pdf",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\MR\\PJM.MR.01.PENGENDALIAN DOKUMEN DAN REKAMAN.doc",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\MR\\PJM.MR.01.PENGENDALIAN DOKUMEN DAN REKAMAN.pdf",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\MR\\PJM.MR.02.TINJAUAN MANAJEMEN.doc",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\MR\\PJM.MR.02.TINJAUAN MANAJEMEN.pdf",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\MR\\PJM.MR.03.AUDIT MUTU INTERNAL.doc",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\MR\\PJM.MR.03.AUDIT MUTU INTERNAL.pdf",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\MR\\PJM.MR.04.TINDAKAN KOREKSIF.doc",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\MR\\PJM.MR.04.TINDAKAN KOREKSIF.pdf",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\MR\\PJM.MR.05.MANAJEMEN PERUBAHAN.doc",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\MR\\PJM.MR.05.MANAJEMEN PERUBAHAN.pdf",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\MR\\PJM.MR.06.ANALISA RISIKO.doc",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\MR\\PJM.MR.06.ANALISA RISIKO.pdf",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\MTC\\PJM.MTC.01.PENGENDALIAN MESIN.doc",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\MTC\\PJM.MTC.01.PENGENDALIAN MESIN.pdf",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\PBL\\PJM.PBL.01.PEMBELIAN BARANG DAN JASA.doc",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\PBL\\PJM.PBL.01.PEMBELIAN BARANG DAN JASA.pdf",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\PBL\\PJM.PBL.02.SELEKSI DAN EVALUASI SUPPLIER.doc",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\PBL\\PJM.PBL.02.SELEKSI DAN EVALUASI SUPPLIER.pdf",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\PBL\\UT.PBL.01.PEMBELIAN.doc",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\PBL\\UT.PBL.01.PEMBELIAN.pdf",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\PPIC\\PJM.PPIC.01.PERENCANAAN KERJA.doc",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\PPIC\\PJM.PPIC.01.PERENCANAAN KERJA.pdf",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\PPIC\\PJM.PPIC.02.PENGENDALIAN KEGIATAN DESIGN.doc",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\PPIC\\PJM.PPIC.02.PENGENDALIAN KEGIATAN DESIGN.pdf",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\PPIC\\UT.PPIC.01.PPIC.doc",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\PPIC\\UT.PPIC.01.PPIC.pdf",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\PPIC\\UT.PPIC.02.SPV. BAHAN BAKU.doc",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\PPIC\\UT.PPIC.02.SPV. BAHAN BAKU.pdf",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\PPIC\\UT.PPIC.03.SPV. GD JADI.doc",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\PPIC\\UT.PPIC.03.SPV. GD JADI.pdf",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\PPIC\\UT.PPIC.04 SPV. GD SPAREPART \u0026 PENOLONG.doc",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\PPIC\\UT.PPIC.04 SPV. GD SPAREPART \u0026 PENOLONG.pdf",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\PPIC\\UT.PPIC.05.ADMIN GUDANG BARANG JADI.doc",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\PPIC\\UT.PPIC.05.ADMIN GUDANG BARANG JADI.pdf",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\PRD-FL\\PJM.PRD-FL.01 PROSEDUR KERJA PRODUKSI FLANGE.doc",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\PRD-FL\\PJM.PRD-FL.01.PROSEDUR KERJA PRODUKSI FLANGE.pdf",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\PRD-FL\\PJM.PRD-FL.02.PEMBUATAN MATRAS.doc",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\PRD-FL\\PJM.PRD-FL.02.PEMBUATAN MATRAS.pdf",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\PRD-FL\\PJM.PRD-FL.03.PROSEDUR KERJA COR.doc",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\PRD-FL\\PJM.PRD-FL.03.PROSEDUR KERJA COR.pdf",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\PRD-FL\\PJM.PRD-FL.04.PROSEDUR KERJA NETTO.doc",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\PRD-FL\\PJM.PRD-FL.04.PROSEDUR KERJA NETTO.pdf",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\PRD-FL\\PJM.PRD-FL.05.PROSEDUR KERJA BUBUT \u0026 BOR.doc",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\PRD-FL\\PJM.PRD-FL.05.PROSEDUR KERJA BUBUT \u0026 BOR.pdf",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\PRD-PF\\PJM.PRD-PF.01.PROSEDUR KERJA PRODUKSI FITTING \u0026 BALLVALVE.doc",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\PRD-PF\\PJM.PRD-PF.01.PROSEDUR KERJA PRODUKSI FITTING \u0026 BALLVALVE.pdf",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\PRD-PF\\PJM.PRD-PF.02.PROSEDUR KERJA BUBUT \u0026 BOR.doc",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\PRD-PF\\PJM.PRD-PF.02.PROSEDUR KERJA BUBUT FITTING.pdf",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\PRS\\PJM.PRS.01.PROSEDUR KERJA PERSONALIA.doc",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\PRS\\PJM.PRS.01.PROSEDUR KERJA PERSONALIA.pdf",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\PRS\\PJM.PRS.02.PEMELIHARAAN SARANA DAN INFRASTRUKTUR.doc",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\PRS\\PJM.PRS.02.PEMELIHARAAN SARANA DAN INFRASTRUKTUR.pdf",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\PRS\\PJM.PRS.03.IZIN MENINGGALKAN PEKERJAAN.doc",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\PRS\\PJM.PRS.03.IZIN MENINGGALKAN PEKERJAAN.pdf",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\PRS\\UT.PRS.01.MANAJER SDM.doc",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\PRS\\UT.PRS.01.MANAJER SDM.pdf",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\PRS\\UT.PRS.02.KEPALA SATUAN PENGAMANAN.doc",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\PRS\\UT.PRS.02.KEPALA SATUAN PENGAMANAN.pdf",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\PRS\\UT.PRS.03.ANGGOTA SATUAN PENGAMANAN.doc",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\PRS\\UT.PRS.03.ANGGOTA SATUAN PENGAMANAN.pdf",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\QA\\UT.QA.01.MANAJER QUALITY ASSURANCE.doc",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\QA\\UT.QA.01.MANAJER QUALITY ASSURANCE.pdf",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\QA\\UT.QA.02.SUPERVISOR QUALITY ASSURANCE.doc",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\QA\\UT.QA.02.SUPERVISOR QUALITY ASSURANCE.pdf",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\QA\\UT.QA.03 OPERATOR QUALITY ASSURANCE.doc",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\QA\\UT.QA.03.OPERATOR QUALITY ASSURANCE.pdf",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\QA-AL\\IK.QA-FL.01. SPECTROMETER.docx",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\QA-BHN\\IK.QA-BAHAN.01.PROSEDUR RADIASI BAHAN.doc",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\QA-BHN\\IK.QA-BAHAN.01.PROSEDUR RADIASI BAHAN.pdf",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\TAX\\UT.TAX.01.MANAJER PAJAK.doc",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\TAX\\UT.TAX.01.MANAJER PAJAK.pdf",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\TAX\\UT.TAX.02.STAFF PAJAK.doc",
+        "Target":  "C",
+        "Dest":  null
+    },
+    {
+        "Import":  "C:\\laragon\\www\\Library-ISO\\imports\\TAX\\UT.TAX.02.STAFF PAJAK.pdf",
+        "Target":  "C",
+        "Dest":  null
+    }
+]

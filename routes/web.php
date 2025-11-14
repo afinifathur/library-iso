@@ -12,102 +12,149 @@ use App\Http\Controllers\CategoryController;
 
 /*
 |--------------------------------------------------------------------------
-| AUTH
+| Web Routes (clean & consistent)
+|--------------------------------------------------------------------------
+|
+| Aturan:
+| - Gunakan route name konsisten (mis. documents.compare)
+| - Kelompokkan route yang memerlukan auth
+| - Batasi parameter numerik dengan whereNumber()
+| - Sertakan file ISO opsional jika ada
+|
+*/
+
+/*
+|--------------------------------------------------------------------------
+| AUTH (guest)
 |--------------------------------------------------------------------------
 */
-Route::get('/login',     [AuthController::class, 'showLoginForm'])->name('login');
-Route::post('/login',    [AuthController::class, 'login'])->name('login.attempt');
+Route::middleware('guest')->group(function () {
+    Route::get('/login',     [AuthController::class, 'showLoginForm'])->name('login');
+    Route::post('/login',    [AuthController::class, 'login'])->name('login.attempt');
 
-Route::get('/register',  [AuthController::class, 'showRegisterForm'])->name('register');
-Route::post('/register', [AuthController::class, 'register'])->name('register.attempt');
+    Route::get('/register',  [AuthController::class, 'showRegisterForm'])->name('register');
+    Route::post('/register', [AuthController::class, 'register'])->name('register.attempt');
+});
 
-Route::post('/logout',   [AuthController::class, 'logout'])->middleware('auth')->name('logout');
+Route::post('/logout', [AuthController::class, 'logout'])
+    ->middleware('auth')
+    ->name('logout');
 
 /*
 |--------------------------------------------------------------------------
 | ROOT
 |--------------------------------------------------------------------------
-| Gunakan redirect ke nama route agar aman untuk instalasi subfolder.
 */
 Route::get('/', fn () => redirect()->route('login'));
 
 /*
 |--------------------------------------------------------------------------
-| DASHBOARD (auth)
+| AUTHENTICATED ROUTES (group)
 |--------------------------------------------------------------------------
 */
-Route::middleware('auth')->get('/dashboard', [DashboardController::class, 'index'])->name('dashboard.index');
+Route::middleware('auth')->group(function () {
 
-/*
-|--------------------------------------------------------------------------
-| EXTRA ISO ROUTES (opsional file terpisah)
-|--------------------------------------------------------------------------
-*/
-$isoRoutes = base_path('routes/iso_documents.php');
-if (file_exists($isoRoutes)) {
-    require $isoRoutes;
-}
+    // Dashboard
+    Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard.index');
 
-/*
-|--------------------------------------------------------------------------
-| DOCUMENTS (auth)
-| Termasuk: index/create/upload/show/compare/edit/updateCombined + download version
-|--------------------------------------------------------------------------
-*/
-Route::middleware('auth')->prefix('documents')->name('documents.')->group(function () {
-    Route::get('', [DocumentController::class, 'index'])->name('index');
-    Route::post('', [DocumentController::class, 'store'])->name('store');
+    /*
+    |--------------------------------------------------------------------------
+    | DOCUMENTS (document-level routes)
+    | - index/create/upload/show/compare/edit/updateCombined
+    | - version download: documents.versions.download
+    |--------------------------------------------------------------------------
+    */
+    Route::prefix('documents')->name('documents.')->group(function () {
+        Route::get('', [DocumentController::class, 'index'])->name('index');
+        Route::get('create', [DocumentController::class, 'create'])->name('create');
+        Route::post('', [DocumentController::class, 'store'])->name('store');
 
-    Route::get('create', [DocumentController::class, 'create'])->name('create');
-    Route::post('upload-pdf', [DocumentController::class, 'uploadPdf'])->name('uploadPdf');
+        Route::post('upload-pdf', [DocumentController::class, 'uploadPdf'])->name('uploadPdf');
 
-    Route::get('{document}', [DocumentController::class, 'show'])
-        ->whereNumber('document')
-        ->name('show');
+        // document-specific (use numeric constraint)
+        Route::get('{document}', [DocumentController::class, 'show'])
+            ->whereNumber('document')
+            ->name('show');
 
-    Route::get('{document}/compare', [DocumentController::class, 'compare'])
-        ->whereNumber('document')
-        ->name('compare');
+        Route::get('{document}/compare', [DocumentController::class, 'compare'])
+            ->whereNumber('document')
+            ->name('compare'); // documents.compare
 
-    Route::get('{document}/edit', [DocumentController::class, 'edit'])
-        ->whereNumber('document')
-        ->name('edit');
+        Route::get('{document}/edit', [DocumentController::class, 'edit'])
+            ->whereNumber('document')
+            ->name('edit');
 
-    Route::put('{document}', [DocumentController::class, 'updateCombined'])
-        ->whereNumber('document')
-        ->name('updateCombined');
+        Route::put('{document}', [DocumentController::class, 'updateCombined'])
+            ->whereNumber('document')
+            ->name('updateCombined');
 
-    Route::get('versions/{version}/download', [DocumentController::class, 'downloadVersion'])
-        ->whereNumber('version')
-        ->name('versions.download');
-});
+        // download a specific version (kepraktisan: tetap di bawah prefix documents)
+        Route::get('versions/{version}/download', [DocumentController::class, 'downloadVersion'])
+            ->whereNumber('version')
+            ->name('versions.download');
+    });
 
-Route::middleware('auth')->get('/categories', [CategoryController::class, 'index'])->name('categories.index');
-/*
-|--------------------------------------------------------------------------
-| VERSIONS (auth)
-| Termasuk: create/store/show/edit/update/submit
-|--------------------------------------------------------------------------
-*/
-Route::middleware('auth')->prefix('versions')->name('versions.')->group(function () {
-    Route::get('create', [DocumentVersionController::class, 'create'])->name('create');
-    Route::post('', [DocumentVersionController::class, 'store'])->name('store');
+    // Categories (simple)
+    Route::get('/categories', [CategoryController::class, 'index'])->name('categories.index');
 
-    Route::get('{version}', [DocumentVersionController::class, 'show'])
-        ->whereNumber('version')
-        ->name('show');
+    /*
+    |--------------------------------------------------------------------------
+    | VERSIONS (version-level routes)
+    | - create/store/show/edit/update/submit
+    |--------------------------------------------------------------------------
+    */
+    Route::prefix('versions')->name('versions.')->group(function () {
+        Route::get('create', [DocumentVersionController::class, 'create'])->name('create');
+        Route::post('', [DocumentVersionController::class, 'store'])->name('store');
 
-    Route::post('{version}/submit', [DocumentVersionController::class, 'submitForApproval'])
-        ->whereNumber('version')
-        ->name('submit');
+        Route::get('{version}', [DocumentVersionController::class, 'show'])
+            ->whereNumber('version')
+            ->name('show');
 
-    Route::get('{version}/edit', [DocumentVersionController::class, 'edit'])
-        ->whereNumber('version')
-        ->name('edit');
+        Route::post('{version}/submit', [DocumentVersionController::class, 'submitForApproval'])
+            ->whereNumber('version')
+            ->name('submit');
 
-    Route::put('{version}', [DocumentVersionController::class, 'update'])
-        ->whereNumber('version')
-        ->name('update');
+        Route::get('{version}/edit', [DocumentVersionController::class, 'edit'])
+            ->whereNumber('version')
+            ->name('edit');
+
+        Route::put('{version}', [DocumentVersionController::class, 'update'])
+            ->whereNumber('version')
+            ->name('update');
+    });
+
+    /*
+    |--------------------------------------------------------------------------
+    | DRAFTS
+    |--------------------------------------------------------------------------
+    */
+    Route::get('/drafts',                   [DraftController::class, 'index'])->name('drafts.index');
+    Route::get('/drafts/{version}',         [DraftController::class, 'show'])->whereNumber('version')->name('drafts.show');
+    Route::post('/drafts/{version}/delete', [DraftController::class, 'destroy'])->whereNumber('version')->name('drafts.destroy');
+    Route::post('/drafts/{version}/reopen', [DraftController::class, 'reopen'])->whereNumber('version')->name('drafts.reopen');
+
+    /*
+    |--------------------------------------------------------------------------
+    | APPROVAL QUEUE
+    | - index, view (detail), approve, reject
+    | - gunakan numeric constraint untuk {version}
+    |--------------------------------------------------------------------------
+    */
+    Route::prefix('approval')->name('approval.')->group(function () {
+        Route::get('', [ApprovalController::class, 'index'])->name('index');                 // approval.index
+        Route::get('{version}/view', [ApprovalController::class, 'view'])                    // approval.view
+            ->whereNumber('version')
+            ->name('view');
+
+        Route::post('{version}/approve', [ApprovalController::class, 'approve'])            // approval.approve
+            ->whereNumber('version')
+            ->name('approve');
+
+        Route::post('{version}/reject', [ApprovalController::class, 'reject'])              // approval.reject
+            ->whereNumber('version')
+            ->name('reject');
+    });
 });
 
 /*
@@ -120,34 +167,20 @@ Route::get('/departments/{department}', [DepartmentController::class, 'show'])->
 
 /*
 |--------------------------------------------------------------------------
-| DRAFTS (auth)
+| OPTIONAL: EXTRA ISO ROUTES (file terpisah jika ada)
 |--------------------------------------------------------------------------
 */
-Route::middleware('auth')->group(function () {
-    Route::get('/drafts',                   [DraftController::class, 'index'])->name('drafts.index'); // Draft Container
-    Route::get('/drafts/{version}',         [DraftController::class, 'show'])->name('drafts.show');
-    Route::post('/drafts/{version}/delete', [DraftController::class, 'destroy'])->name('drafts.destroy');
-    Route::post('/drafts/{version}/reopen', [DraftController::class, 'reopen'])->name('drafts.reopen');
-});
+$isoRoutes = base_path('routes/iso_documents.php');
+if (file_exists($isoRoutes)) {
+    require $isoRoutes;
+}
 
 /*
 |--------------------------------------------------------------------------
-| APPROVAL QUEUE (auth)
-| NOTE: gunakan redirect()->route(...) agar URL mengikuti subfolder/index.php
+| NOTES
 |--------------------------------------------------------------------------
+| - Pastikan nama route pada view sesuai dengan nama di atas (mis. route('documents.compare'))
+| - Jika views menggunakan route lama (mis. '/approval-queue'), pertahankan redirect di view atau tambahkan:
+|     Route::get('/approval-queue', fn () => redirect()->route('approval.index'));
+| - Jika ingin route model binding otomatis, sesuaikan type-hint pada controller (Document $document, etc.)
 */
-Route::middleware('auth')->group(function () {
-    Route::get('/approval', [ApprovalController::class, 'index'])->name('approval.index');
-
-    // URL lama -> baru
-    Route::get('/approval-queue', fn () => redirect()->route('approval.index'));
-
-    Route::post('/approval/{version}/approve', [ApprovalController::class, 'approve'])
-        ->whereNumber('version')
-        ->name('approval.approve');
-
-    // Opsi A: sesuaikan placeholder dengan parameter controller ($versionId)
-    Route::post('/approval/{versionId}/reject', [ApprovalController::class, 'reject'])
-        ->whereNumber('versionId')
-        ->name('approval.reject');
-});

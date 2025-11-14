@@ -1,0 +1,95 @@
+﻿C:\laragon\www\Library-ISO\imports\ACC & FIN\UT.ACC&FIN.01 MANAJ. ACC & FINANCE.doc
+C:\laragon\www\Library-ISO\imports\ACC & FIN\UT.ACC&FIN.01 MANAJ. ACC & FINANCE.pdf
+C:\laragon\www\Library-ISO\imports\DIR\UT.DIR.01.DIREKTUR.doc
+C:\laragon\www\Library-ISO\imports\DIR\UT.DIR.01.DIREKTUR.pdf
+C:\laragon\www\Library-ISO\imports\DIR\UT.DIR.02.MR.doc
+C:\laragon\www\Library-ISO\imports\DIR\UT.DIR.02.MR.pdf
+C:\laragon\www\Library-ISO\imports\DIR\UT.DIR.03.DOCUMENT CONTROLLER.doc
+C:\laragon\www\Library-ISO\imports\DIR\UT.DIR.03.DOCUMENT CONTROLLER.pdf
+C:\laragon\www\Library-ISO\imports\MKT-EXIM\PJM.MKT-EXIM.01.PENERIMAAN ORDER.doc
+C:\laragon\www\Library-ISO\imports\MKT-EXIM\PJM.MKT-EXIM.01.PENERIMAAN ORDER.pdf
+C:\laragon\www\Library-ISO\imports\MKT-EXIM\PJM.MKT-EXIM.02.PENILAIAN KEPUASAN PELANGGAN.doc
+C:\laragon\www\Library-ISO\imports\MKT-EXIM\PJM.MKT-EXIM.02.PENILAIAN KEPUASAN PELANGGAN.pdf
+C:\laragon\www\Library-ISO\imports\MKT-EXIM\PJM.MKT-EXIM.03.PENGUKURAN EKSPORT DAN IMPORT.doc
+C:\laragon\www\Library-ISO\imports\MKT-EXIM\PJM.MKT-EXIM.03.PENGUKURAN EKSPORT DAN IMPORT.pdf
+C:\laragon\www\Library-ISO\imports\MKT-EXIM\PJM.MKT-EXIM.04.PENGIRIMAN BARANG JADI.doc
+C:\laragon\www\Library-ISO\imports\MKT-EXIM\PJM.MKT-EXIM.04.PENGIRIMAN BARANG JADI.pdf
+C:\laragon\www\Library-ISO\imports\MKT-EXIM\UT.MKT.EXIM.01.MARKETING & EXIM.doc
+C:\laragon\www\Library-ISO\imports\MKT-EXIM\UT.MKT.EXIM.01.MARKETING & EXIM.pdf
+C:\laragon\www\Library-ISO\imports\MKT-EXIM\UT.MKT.EXIM.02.MARKETING.doc
+C:\laragon\www\Library-ISO\imports\MKT-EXIM\UT.MKT.EXIM.02.MARKETING.pdf
+C:\laragon\www\Library-ISO\imports\MKT-EXIM\UT.MKT.EXIM.03.EXIM.doc
+C:\laragon\www\Library-ISO\imports\MKT-EXIM\UT.MKT.EXIM.03.EXIM.pdf
+C:\laragon\www\Library-ISO\imports\MR\PJM.MR.01.PENGENDALIAN DOKUMEN DAN REKAMAN.doc
+C:\laragon\www\Library-ISO\imports\MR\PJM.MR.01.PENGENDALIAN DOKUMEN DAN REKAMAN.pdf
+C:\laragon\www\Library-ISO\imports\MR\PJM.MR.02.TINJAUAN MANAJEMEN.doc
+C:\laragon\www\Library-ISO\imports\MR\PJM.MR.02.TINJAUAN MANAJEMEN.pdf
+C:\laragon\www\Library-ISO\imports\MR\PJM.MR.03.AUDIT MUTU INTERNAL.doc
+C:\laragon\www\Library-ISO\imports\MR\PJM.MR.03.AUDIT MUTU INTERNAL.pdf
+C:\laragon\www\Library-ISO\imports\MR\PJM.MR.04.TINDAKAN KOREKSIF.doc
+C:\laragon\www\Library-ISO\imports\MR\PJM.MR.04.TINDAKAN KOREKSIF.pdf
+C:\laragon\www\Library-ISO\imports\MR\PJM.MR.05.MANAJEMEN PERUBAHAN.doc
+C:\laragon\www\Library-ISO\imports\MR\PJM.MR.05.MANAJEMEN PERUBAHAN.pdf
+C:\laragon\www\Library-ISO\imports\MR\PJM.MR.06.ANALISA RISIKO.doc
+C:\laragon\www\Library-ISO\imports\MR\PJM.MR.06.ANALISA RISIKO.pdf
+C:\laragon\www\Library-ISO\imports\MTC\PJM.MTC.01.PENGENDALIAN MESIN.doc
+C:\laragon\www\Library-ISO\imports\MTC\PJM.MTC.01.PENGENDALIAN MESIN.pdf
+C:\laragon\www\Library-ISO\imports\PBL\PJM.PBL.01.PEMBELIAN BARANG DAN JASA.doc
+C:\laragon\www\Library-ISO\imports\PBL\PJM.PBL.01.PEMBELIAN BARANG DAN JASA.pdf
+C:\laragon\www\Library-ISO\imports\PBL\PJM.PBL.02.SELEKSI DAN EVALUASI SUPPLIER.doc
+C:\laragon\www\Library-ISO\imports\PBL\PJM.PBL.02.SELEKSI DAN EVALUASI SUPPLIER.pdf
+C:\laragon\www\Library-ISO\imports\PBL\UT.PBL.01.PEMBELIAN.doc
+C:\laragon\www\Library-ISO\imports\PBL\UT.PBL.01.PEMBELIAN.pdf
+C:\laragon\www\Library-ISO\imports\PPIC\PJM.PPIC.01.PERENCANAAN KERJA.doc
+C:\laragon\www\Library-ISO\imports\PPIC\PJM.PPIC.01.PERENCANAAN KERJA.pdf
+C:\laragon\www\Library-ISO\imports\PPIC\PJM.PPIC.02.PENGENDALIAN KEGIATAN DESIGN.doc
+C:\laragon\www\Library-ISO\imports\PPIC\PJM.PPIC.02.PENGENDALIAN KEGIATAN DESIGN.pdf
+C:\laragon\www\Library-ISO\imports\PPIC\UT.PPIC.01.PPIC.doc
+C:\laragon\www\Library-ISO\imports\PPIC\UT.PPIC.01.PPIC.pdf
+C:\laragon\www\Library-ISO\imports\PPIC\UT.PPIC.02.SPV. BAHAN BAKU.doc
+C:\laragon\www\Library-ISO\imports\PPIC\UT.PPIC.02.SPV. BAHAN BAKU.pdf
+C:\laragon\www\Library-ISO\imports\PPIC\UT.PPIC.03.SPV. GD JADI.doc
+C:\laragon\www\Library-ISO\imports\PPIC\UT.PPIC.03.SPV. GD JADI.pdf
+C:\laragon\www\Library-ISO\imports\PPIC\UT.PPIC.04 SPV. GD SPAREPART & PENOLONG.doc
+C:\laragon\www\Library-ISO\imports\PPIC\UT.PPIC.04 SPV. GD SPAREPART & PENOLONG.pdf
+C:\laragon\www\Library-ISO\imports\PPIC\UT.PPIC.05.ADMIN GUDANG BARANG JADI.doc
+C:\laragon\www\Library-ISO\imports\PPIC\UT.PPIC.05.ADMIN GUDANG BARANG JADI.pdf
+C:\laragon\www\Library-ISO\imports\PRD-FL\PJM.PRD-FL.01 PROSEDUR KERJA PRODUKSI FLANGE.doc
+C:\laragon\www\Library-ISO\imports\PRD-FL\PJM.PRD-FL.01.PROSEDUR KERJA PRODUKSI FLANGE.pdf
+C:\laragon\www\Library-ISO\imports\PRD-FL\PJM.PRD-FL.02.PEMBUATAN MATRAS.doc
+C:\laragon\www\Library-ISO\imports\PRD-FL\PJM.PRD-FL.02.PEMBUATAN MATRAS.pdf
+C:\laragon\www\Library-ISO\imports\PRD-FL\PJM.PRD-FL.03.PROSEDUR KERJA COR.doc
+C:\laragon\www\Library-ISO\imports\PRD-FL\PJM.PRD-FL.03.PROSEDUR KERJA COR.pdf
+C:\laragon\www\Library-ISO\imports\PRD-FL\PJM.PRD-FL.04.PROSEDUR KERJA NETTO.doc
+C:\laragon\www\Library-ISO\imports\PRD-FL\PJM.PRD-FL.04.PROSEDUR KERJA NETTO.pdf
+C:\laragon\www\Library-ISO\imports\PRD-FL\PJM.PRD-FL.05.PROSEDUR KERJA BUBUT & BOR.doc
+C:\laragon\www\Library-ISO\imports\PRD-FL\PJM.PRD-FL.05.PROSEDUR KERJA BUBUT & BOR.pdf
+C:\laragon\www\Library-ISO\imports\PRD-PF\PJM.PRD-PF.01.PROSEDUR KERJA PRODUKSI FITTING & BALLVALVE.doc
+C:\laragon\www\Library-ISO\imports\PRD-PF\PJM.PRD-PF.01.PROSEDUR KERJA PRODUKSI FITTING & BALLVALVE.pdf
+C:\laragon\www\Library-ISO\imports\PRD-PF\PJM.PRD-PF.02.PROSEDUR KERJA BUBUT & BOR.doc
+C:\laragon\www\Library-ISO\imports\PRD-PF\PJM.PRD-PF.02.PROSEDUR KERJA BUBUT FITTING.pdf
+C:\laragon\www\Library-ISO\imports\PRS\PJM.PRS.01.PROSEDUR KERJA PERSONALIA.doc
+C:\laragon\www\Library-ISO\imports\PRS\PJM.PRS.01.PROSEDUR KERJA PERSONALIA.pdf
+C:\laragon\www\Library-ISO\imports\PRS\PJM.PRS.02.PEMELIHARAAN SARANA DAN INFRASTRUKTUR.doc
+C:\laragon\www\Library-ISO\imports\PRS\PJM.PRS.02.PEMELIHARAAN SARANA DAN INFRASTRUKTUR.pdf
+C:\laragon\www\Library-ISO\imports\PRS\PJM.PRS.03.IZIN MENINGGALKAN PEKERJAAN.doc
+C:\laragon\www\Library-ISO\imports\PRS\PJM.PRS.03.IZIN MENINGGALKAN PEKERJAAN.pdf
+C:\laragon\www\Library-ISO\imports\PRS\UT.PRS.01.MANAJER SDM.doc
+C:\laragon\www\Library-ISO\imports\PRS\UT.PRS.01.MANAJER SDM.pdf
+C:\laragon\www\Library-ISO\imports\PRS\UT.PRS.02.KEPALA SATUAN PENGAMANAN.doc
+C:\laragon\www\Library-ISO\imports\PRS\UT.PRS.02.KEPALA SATUAN PENGAMANAN.pdf
+C:\laragon\www\Library-ISO\imports\PRS\UT.PRS.03.ANGGOTA SATUAN PENGAMANAN.doc
+C:\laragon\www\Library-ISO\imports\PRS\UT.PRS.03.ANGGOTA SATUAN PENGAMANAN.pdf
+C:\laragon\www\Library-ISO\imports\QA\UT.QA.01.MANAJER QUALITY ASSURANCE.doc
+C:\laragon\www\Library-ISO\imports\QA\UT.QA.01.MANAJER QUALITY ASSURANCE.pdf
+C:\laragon\www\Library-ISO\imports\QA\UT.QA.02.SUPERVISOR QUALITY ASSURANCE.doc
+C:\laragon\www\Library-ISO\imports\QA\UT.QA.02.SUPERVISOR QUALITY ASSURANCE.pdf
+C:\laragon\www\Library-ISO\imports\QA\UT.QA.03 OPERATOR QUALITY ASSURANCE.doc
+C:\laragon\www\Library-ISO\imports\QA\UT.QA.03.OPERATOR QUALITY ASSURANCE.pdf
+C:\laragon\www\Library-ISO\imports\QA-AL\IK.QA-FL.01. SPECTROMETER.docx
+C:\laragon\www\Library-ISO\imports\QA-BHN\IK.QA-BAHAN.01.PROSEDUR RADIASI BAHAN.doc
+C:\laragon\www\Library-ISO\imports\QA-BHN\IK.QA-BAHAN.01.PROSEDUR RADIASI BAHAN.pdf
+C:\laragon\www\Library-ISO\imports\TAX\UT.TAX.01.MANAJER PAJAK.doc
+C:\laragon\www\Library-ISO\imports\TAX\UT.TAX.01.MANAJER PAJAK.pdf
+C:\laragon\www\Library-ISO\imports\TAX\UT.TAX.02.STAFF PAJAK.doc
+C:\laragon\www\Library-ISO\imports\TAX\UT.TAX.02.STAFF PAJAK.pdf
