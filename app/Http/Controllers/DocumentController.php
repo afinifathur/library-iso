@@ -241,132 +241,143 @@ class DocumentController extends Controller
 
     /**
      * Create NEW DOCUMENT (baseline v1 approved)
+     *
+     * NOTE: This is the modified/clean store() method requested.
+     * Ganti method store() lama dengan ini (atau paste hanya method ini).
      */
     public function store(Request $request)
     {
         $user = $request->user();
+        if (! $user) {
+            return redirect()->route('login')->with('error','Login required.');
+        }
+        if (! $this->userCanUpload($user)) {
+            abort(403,'Anda tidak memiliki hak untuk mengunggah dokumen.');
+        }
 
         $data = $request->validate([
             'doc_code'       => 'nullable|string|max:120',
             'title'          => 'required|string|max:255',
             'category_id'    => 'required|integer|exists:categories,id',
             'department_id'  => 'required|integer|exists:departments,id',
-            'file'           => 'nullable|file|mimes:pdf,doc,docx|max:51200',
+            'master_file'    => 'required|file|mimes:doc,docx|max:102400', // master wajib
+            'file'           => 'nullable|file|mimes:pdf|max:51200', // pdf optional
             'pasted_text'    => 'nullable|string',
             'version_label'  => 'nullable|string|max:50',
-            'approved_at'    => 'nullable|string',
-            'approved_by'    => 'nullable|email',
-            'created_at'     => 'nullable|string',
             'change_note'    => 'nullable|string|max:2000',
-            'doc_number'     => 'nullable|string|max:120',
+            'submit_for'     => 'nullable|in:save,submit',
         ]);
 
-        // generate doc_code if missing
+        // generate doc_code jika kosong (gunakan category.code jika tersedia)
         if (empty($data['doc_code'])) {
             $dept = Department::find($data['department_id']);
             $deptCode = $dept?->code ?? 'MISC';
 
-            $cat = class_exists(\App\Models\Category::class) ? \App\Models\Category::find($data['category_id']) : null;
-            $catCode = $cat?->code ?? 'CAT';
-
-            if (method_exists(Document::class, 'generateDocCode')) {
-                $data['doc_code'] = Document::generateDocCode($catCode, $deptCode);
-            } else {
-                $data['doc_code'] = strtoupper($catCode).".".$deptCode.".".
-                    str_pad((string)random_int(1,999),3,'0',STR_PAD_LEFT);
+            $catCode = null;
+            if (class_exists(\App\Models\Category::class)) {
+                $cat = \App\Models\Category::find($data['category_id']);
+                $catCode = $cat?->code ?? null;
             }
+            $catPart = $catCode ?? strtoupper(Str::slug($cat?->name ?? 'CAT', '-'));
+            // simple generator; boleh ganti ke method Document::generateDocCode
+            $data['doc_code'] = strtoupper($catPart).'.'.$deptCode.'.'.str_pad(random_int(1,999),3,'0',STR_PAD_LEFT);
         }
 
         $disk = Storage::disk('documents');
 
-        // save uploaded file (optional)
-        $file_path = null;
-        $file_mime = null;
-        $checksum  = null;
+        // Transaction: create/fetch document and save files + version
+        return DB::transaction(function() use ($request, $data, $user, $disk) {
 
-        if ($request->hasFile('file')) {
-            $file     = $request->file('file');
-            $safeName = $this->safeFilename($file->getClientOriginalName());
-            $filename = time().'_'.Str::slug(pathinfo($safeName,PATHINFO_FILENAME))
-                .'.'.pathinfo($safeName,PATHINFO_EXTENSION);
+            // firstOrCreate to avoid unique constraint error
+            $document = Document::firstOrCreate(
+                ['doc_code' => $data['doc_code']],
+                [
+                    'title' => $data['title'],
+                    'department_id' => (int)$data['department_id'],
+                    'category_id' => (int)$data['category_id'],
+                ]
+            );
 
-            $versionLabel = $data['version_label'] ?? 'v1';
-            $folder = $data['doc_code'].'/'.$versionLabel;
+            // Save master (required)
+            $master_path = null;
+            if ($request->hasFile('master_file')) {
+                $master = $request->file('master_file');
+                $safeName = $this->safeFilename($master->getClientOriginalName());
+                $master_name = now()->timestamp.'_master_'.Str::random(6).'_'.$safeName;
+                $master_path = $document->doc_code . '/master/' . $master_name;
+                $disk->put($master_path, file_get_contents($master->getRealPath()));
+            }
 
-            $file_path = $folder.'/'.$filename;
-            $content   = file_get_contents($file->getRealPath());
+            // Save pdf (optional)
+            $file_path = null; $file_mime = null; $checksum = null;
+            if ($request->hasFile('file')) {
+                $file = $request->file('file');
+                $safeName = $this->safeFilename($file->getClientOriginalName());
+                $filename = now()->timestamp.'_'.Str::random(6).'_'.$safeName;
+                $label = $data['version_label'] ?? 'v1';
+                $file_path = $document->doc_code.'/'.$label.'/'.$filename;
+                $content = file_get_contents($file->getRealPath());
+                $disk->put($file_path, $content);
+                $file_mime = $file->getClientMimeType() ?: 'application/pdf';
+                $checksum = hash('sha256', $content);
+                // duplicate check by checksum (prevent re-upload same file)
+                if ($checksum && DocumentVersion::where('checksum', $checksum)->exists()) {
+                    return redirect()->route('documents.show', $document->id)
+                        ->with('info','File sudah ada (checksum match). Versi tidak dibuat ulang.');
+                }
+            }
 
-            $disk->put($file_path, $content);
-            $file_mime = $file->getClientMimeType() ?: 'application/octet-stream';
-            $checksum  = hash('sha256', $content);
-        }
-
-        // normalize timestamp fields
-        $createdAt = $this->parseDateString($this->cleanString($data['created_at'] ?? null)) ?? now();
-        $approvedAt = $this->parseDateString($this->cleanString($data['approved_at'] ?? null)) ?? now();
-
-        $approvedByUserId = $user?->id;
-        if (!empty($data['approved_by'])) {
-            $u = \App\Models\User::where('email', $data['approved_by'])->first();
-            if ($u) $approvedByUserId = $u->id;
-        }
-
-        $versionLabel = $data['version_label'] ?? 'v1';
-
-        return DB::transaction(function () use ($request, $data, $versionLabel, $createdAt, $approvedAt, $approvedByUserId, $file_path, $file_mime, $checksum, $user) {
-
-          $document = Document::firstOrCreate(
-    ['doc_code' => $data['doc_code']],
-    [
-        'title' => $data['title'],
-        'department_id' => (int)$data['department_id'],
-        'category_id' => (int)$data['category_id'],
-        'doc_number' => $data['doc_number'] ?? null,
-    ]
-);
-
-// jika sudah ada, kamu bisa update metadata:
-$document->update([
-    'title' => $data['title'],
-    'department_id' => (int)$data['department_id'],
-    'category_id' => (int)$data['category_id'],
-]);
-
-            // baseline v1 APPROVED
+            // Create version
             $version = new DocumentVersion();
             $version->document_id    = $document->id;
-            $version->version_label  = $versionLabel;
-            $version->status         = 'approved';
-            $version->approval_stage = 'DONE';
-            $version->created_by     = $user?->id;
+            $version->version_label  = $data['version_label'] ?? 'v1';
+            $version->status         = (($data['submit_for'] ?? 'save') === 'submit') ? 'submitted' : 'draft';
+            $version->approval_stage = 'KABAG';
+            $version->created_by     = $user->id;
             $version->file_path      = $file_path;
             $version->file_mime      = $file_mime;
             $version->checksum       = $checksum;
             $version->change_note    = $data['change_note'] ?? null;
 
-            if ($request->filled('pasted_text')) {
-                $clean = $this->normalizeText($request->input('pasted_text'));
-                $version->plain_text  = $clean;
+            if (!empty($data['pasted_text'])) {
+                $clean = $this->normalizeText($data['pasted_text']);
                 $version->pasted_text = $clean;
+                $version->plain_text  = $clean;
             }
 
-            // manual timestamps
-            $version->timestamps  = false;
-            $version->created_at  = $createdAt;
-            $version->updated_at  = $createdAt;
-            $version->approved_by = $approvedByUserId;
-            $version->approved_at = $approvedAt;
             $version->save();
 
-            // update doc meta
-            $document->current_version_id = $version->id;
-            $document->revision_number    = 1;
-            $document->revision_date      = $approvedAt;
-            $document->save();
+            // Try synchronous extract from master (docx) if possible
+            if (empty($version->plain_text) && $master_path && $disk->exists($master_path)) {
+                // If master is docx: extract via zip (fast)
+                if (Str::endsWith(strtolower($master_path), '.docx')) {
+                    $binary = $disk->get($master_path);
+                    $ex = $this->extractDocxText($binary);
+                    if ($ex) {
+                        $version->plain_text = $ex;
+                        $version->save();
+                    }
+                } else {
+                    // If .doc (binary): recommended convert to docx externally (libreoffice) or queue a conversion job
+                    // we'll leave extraction to background job / command if needed
+                }
+            }
 
-            return redirect()
-                ->route('documents.show', $document->id)
-                ->with('success','Document created as baseline ('.$versionLabel.').');
+            // audit log optional
+            if (class_exists(\App\Models\AuditLog::class)) {
+                \App\Models\AuditLog::create([
+                    'event' => 'upload_version',
+                    'user_id' => $user->id,
+                    'document_id' => $document->id,
+                    'document_version_id' => $version->id,
+                    'detail' => json_encode(['master'=>$master_path,'file'=>$file_path,'submit'=> ($data['submit_for'] ?? 'save')==='submit']),
+                    'ip' => request()->ip(),
+                ]);
+            }
+
+            $msg = ($data['submit_for'] ?? 'save') === 'submit' ? 'Version submitted for approval.' : 'Version saved as draft.';
+
+            return redirect()->route('documents.show',$document->id)->with('success',$msg);
         });
     }
 
