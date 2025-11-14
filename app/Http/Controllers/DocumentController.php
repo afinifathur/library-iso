@@ -23,24 +23,18 @@ class DocumentController extends Controller
     public function index(Request $request)
     {
         $departments = Department::orderBy('code')->get();
-
-        $categories = [];
-        if (class_exists(\App\Models\Category::class)) {
-            $categories = \App\Models\Category::orderBy('name')->get();
-        }
+        $categories = class_exists(\App\Models\Category::class)
+            ? \App\Models\Category::orderBy('name')->get()
+            : [];
 
         $docs = Document::with(['department', 'currentVersion'])
             ->when($request->filled('department'), function ($q) use ($request) {
                 $dept = $request->input('department');
-                $q->whereHas('department', function ($qb) use ($dept) {
-                    $qb->where('code', $dept)->orWhere('id', $dept);
-                });
+                $q->whereHas('department', fn($qb) => $qb->where('code', $dept)->orWhere('id', $dept));
             })
             ->when($request->filled('category_id') || $request->filled('category'), function ($q) use ($request) {
                 $cat = $request->filled('category_id') ? $request->input('category_id') : $request->input('category');
-                $q->where(function ($qq) use ($cat) {
-                    $qq->where('category_id', $cat)->orWhere('category', $cat);
-                });
+                $q->where(fn($qq) => $qq->where('category_id', $cat)->orWhere('category', $cat));
             })
             ->when($request->filled('search'), function ($q) use ($request) {
                 $s = $request->input('search');
@@ -66,7 +60,10 @@ class DocumentController extends Controller
     public function create()
     {
         $departments = Department::orderBy('code')->get();
-        $categories = class_exists(\App\Models\Category::class) ? \App\Models\Category::orderBy('name')->get() : [];
+        $categories = class_exists(\App\Models\Category::class)
+            ? \App\Models\Category::orderBy('name')->get()
+            : [];
+
         return view('documents.create', compact('departments', 'categories'));
     }
 
@@ -77,8 +74,11 @@ class DocumentController extends Controller
     {
         $document = Document::findOrFail($id);
         $departments = Department::orderBy('code')->get();
-        $categories = class_exists(\App\Models\Category::class) ? \App\Models\Category::orderBy('name')->get() : [];
-        return view('documents.edit', compact('document','departments','categories'));
+        $categories = class_exists(\App\Models\Category::class)
+            ? \App\Models\Category::orderBy('name')->get()
+            : [];
+
+        return view('documents.edit', compact('document', 'departments', 'categories'));
     }
 
     /**
@@ -100,17 +100,20 @@ class DocumentController extends Controller
 
         $document->update($validated);
 
-        return redirect()->route('documents.show', $document->id)->with('success', 'Document info updated.');
+        return redirect()->route('documents.show', $document->id)
+            ->with('success', 'Document info updated.');
     }
 
     /**
      * Upload PDF/master file -> create new version (draft/submit).
-     * (Used by uploader form where user uploads a version)
+     * Used by uploader form where user uploads a version.
      */
     public function uploadPdf(Request $request)
     {
         $user = $request->user();
-        if (! $user) return redirect()->route('login')->with('error', 'Login required.');
+        if (! $user) {
+            return redirect()->route('login')->with('error', 'Login required.');
+        }
 
         if (! $this->userCanUpload($user)) {
             abort(403, 'Anda tidak memiliki hak untuk mengunggah dokumen.');
@@ -135,11 +138,14 @@ class DocumentController extends Controller
         if ($request->filled('document_id')) {
             $document = Document::findOrFail((int)$request->input('document_id'));
         } else {
-            // generate doc_code if not provided
             $docCode = $request->input('doc_code') ?: strtoupper(Str::slug($request->input('title'), '-'));
             $document = Document::firstOrCreate(
                 ['doc_code' => $docCode],
-                ['title' => $request->input('title'), 'department_id' => (int)$request->input('department_id'), 'category_id' => $request->input('category_id') ?? null]
+                [
+                    'title' => $request->input('title'),
+                    'department_id' => (int)$request->input('department_id'),
+                    'category_id' => $request->input('category_id') ?? null
+                ]
             );
         }
 
@@ -150,8 +156,8 @@ class DocumentController extends Controller
         if ($request->hasFile('master_file')) {
             $master = $request->file('master_file');
             $safeName = $this->safeFilename($master->getClientOriginalName());
-            $master_name = now()->timestamp.'_master_'.Str::random(6).'_'.$safeName;
-            $master_path = $document->doc_code.'/master/'.$master_name;
+            $master_name = now()->timestamp . '_master_' . Str::random(6) . '_' . $safeName;
+            $master_path = $document->doc_code . '/master/' . $master_name;
             $disk->put($master_path, file_get_contents($master->getRealPath()));
         }
 
@@ -162,8 +168,8 @@ class DocumentController extends Controller
         if ($request->hasFile('file')) {
             $file = $request->file('file');
             $safeName = $this->safeFilename($file->getClientOriginalName());
-            $filename = now()->timestamp.'_'.Str::random(6).'_'.$safeName;
-            $file_path = $document->doc_code.'/'.$request->input('version_label').'/'.$filename;
+            $filename = now()->timestamp . '_' . Str::random(6) . '_' . $safeName;
+            $file_path = $document->doc_code . '/' . $request->input('version_label') . '/' . $filename;
             $content = file_get_contents($file->getRealPath());
             $disk->put($file_path, $content);
             $file_mime = $file->getClientMimeType() ?: 'application/pdf';
@@ -172,17 +178,17 @@ class DocumentController extends Controller
 
         // create version (draft by default)
         $version = DocumentVersion::create([
-            'document_id'   => $document->id,
-            'version_label' => $request->input('version_label'),
-            'status'        => 'draft',
+            'document_id'    => $document->id,
+            'version_label'  => $request->input('version_label'),
+            'status'         => 'draft',
             'approval_stage' => 'KABAG',
-            'created_by'    => $user->id,
-            'file_path'     => $file_path,
-            'file_mime'     => $file_mime,
-            'checksum'      => $checksum,
-            'change_note'   => $request->input('change_note'),
-            'signed_by'     => $request->input('signed_by') ?: $user->name,
-            'signed_at'     => $request->date('signed_at'),
+            'created_by'     => $user->id,
+            'file_path'      => $file_path,
+            'file_mime'      => $file_mime,
+            'checksum'       => $checksum,
+            'change_note'    => $request->input('change_note'),
+            'signed_by'      => $request->input('signed_by') ?: $user->name,
+            'signed_at'      => $request->date('signed_at'),
         ]);
 
         // priority: pasted -> extract from master/docx -> extract from pdf (file)
@@ -240,100 +246,114 @@ class DocumentController extends Controller
     }
 
     /**
-     * Create NEW DOCUMENT (baseline v1 approved)
+     * Create NEW DOCUMENT (baseline v1 approved).
      *
-     * NOTE: This is the modified/clean store() method requested.
-     * Ganti method store() lama dengan ini (atau paste hanya method ini).
+     * Safer store(): check if doc_code already exists — if so, reuse document and add version.
      */
     public function store(Request $request)
     {
         $user = $request->user();
-        if (! $user) {
-            return redirect()->route('login')->with('error','Login required.');
-        }
-        if (! $this->userCanUpload($user)) {
-            abort(403,'Anda tidak memiliki hak untuk mengunggah dokumen.');
-        }
 
         $data = $request->validate([
             'doc_code'       => 'nullable|string|max:120',
             'title'          => 'required|string|max:255',
             'category_id'    => 'required|integer|exists:categories,id',
             'department_id'  => 'required|integer|exists:departments,id',
-            'master_file'    => 'required|file|mimes:doc,docx|max:102400', // master wajib
-            'file'           => 'nullable|file|mimes:pdf|max:51200', // pdf optional
+            'file'           => 'nullable|file|mimes:pdf,doc,docx|max:51200',
             'pasted_text'    => 'nullable|string',
             'version_label'  => 'nullable|string|max:50',
+            'approved_at'    => 'nullable|string',
+            'approved_by'    => 'nullable|email',
+            'created_at'     => 'nullable|string',
             'change_note'    => 'nullable|string|max:2000',
-            'submit_for'     => 'nullable|in:save,submit',
+            'doc_number'     => 'nullable|string|max:120',
         ]);
 
-        // generate doc_code jika kosong (gunakan category.code jika tersedia)
-        if (empty($data['doc_code'])) {
+        // Normalize doc_code (uppercase & trim) if provided
+        $docCode = isset($data['doc_code']) && trim($data['doc_code']) !== '' ? strtoupper(trim($data['doc_code'])) : null;
+
+        // If no doc_code provided, generate one
+        if (empty($docCode)) {
             $dept = Department::find($data['department_id']);
             $deptCode = $dept?->code ?? 'MISC';
 
-            $catCode = null;
+            $categoryCode = null;
             if (class_exists(\App\Models\Category::class)) {
                 $cat = \App\Models\Category::find($data['category_id']);
-                $catCode = $cat?->code ?? null;
+                $categoryCode = $cat?->code ?? null;
             }
-            $catPart = $catCode ?? strtoupper(Str::slug($cat?->name ?? 'CAT', '-'));
-            // simple generator; boleh ganti ke method Document::generateDocCode
-            $data['doc_code'] = strtoupper($catPart).'.'.$deptCode.'.'.str_pad(random_int(1,999),3,'0',STR_PAD_LEFT);
+
+            $catPart = $categoryCode ?? strtoupper(Str::slug((string)($data['category_id'] ?? 'CAT'), '-'));
+            if (method_exists(Document::class, 'generateDocCode')) {
+                $docCode = Document::generateDocCode($catPart, $deptCode);
+            } else {
+                $docCode = strtoupper($catPart) . '.' . $deptCode . '.' . str_pad((string) random_int(1, 999), 3, '0', STR_PAD_LEFT);
+            }
         }
 
         $disk = Storage::disk('documents');
 
-        // Transaction: create/fetch document and save files + version
-        return DB::transaction(function() use ($request, $data, $user, $disk) {
+        // Save uploaded file (if any)
+        $file_path = null;
+        $file_mime = null;
+        $checksum  = null;
+        if ($request->hasFile('file')) {
+            $file = $request->file('file');
+            $safeName = $this->safeFilename($file->getClientOriginalName());
+            $filename = time() . '_' . Str::slug(pathinfo($safeName, PATHINFO_FILENAME)) . '.' . pathinfo($safeName, PATHINFO_EXTENSION);
+            $versionLabel = $data['version_label'] ?? 'v1';
+            $folder = $docCode . '/' . $versionLabel;
+            $file_path = $folder . '/' . $filename;
 
-            // firstOrCreate to avoid unique constraint error
-            $document = Document::firstOrCreate(
-                ['doc_code' => $data['doc_code']],
-                [
-                    'title' => $data['title'],
-                    'department_id' => (int)$data['department_id'],
-                    'category_id' => (int)$data['category_id'],
-                ]
-            );
+            $content = file_get_contents($file->getRealPath());
+            $disk->put($file_path, $content);
+            $file_mime = $file->getClientMimeType() ?: 'application/octet-stream';
+            $checksum = hash('sha256', $content);
+        }
 
-            // Save master (required)
-            $master_path = null;
-            if ($request->hasFile('master_file')) {
-                $master = $request->file('master_file');
-                $safeName = $this->safeFilename($master->getClientOriginalName());
-                $master_name = now()->timestamp.'_master_'.Str::random(6).'_'.$safeName;
-                $master_path = $document->doc_code . '/master/' . $master_name;
-                $disk->put($master_path, file_get_contents($master->getRealPath()));
+        // Normalize timestamps
+        $createdAt = $this->parseDateString($this->cleanString($data['created_at'] ?? null)) ?? now();
+        $approvedAt = $this->parseDateString($this->cleanString($data['approved_at'] ?? null)) ?? now();
+
+        $approvedByUserId = $user?->id;
+        if (!empty($data['approved_by'])) {
+            $u = \App\Models\User::where('email', $data['approved_by'])->first();
+            if ($u) $approvedByUserId = $u->id;
+        }
+
+        $versionLabel = $data['version_label'] ?? 'v1';
+
+        // Transaction: reuse existing doc (by doc_code) or create new one; then create approved baseline version
+        return DB::transaction(function () use ($data, $docCode, $versionLabel, $createdAt, $approvedAt, $approvedByUserId, $file_path, $file_mime, $checksum, $user) {
+
+            // Try to find existing document by doc_code
+            $document = Document::where('doc_code', $docCode)->first();
+
+            if (! $document) {
+                $document = Document::create([
+                    'doc_code'      => $docCode,
+                    'title'         => $data['title'],
+                    'department_id' => (int) $data['department_id'],
+                    'category_id'   => (int) $data['category_id'],
+                    'doc_number'    => $data['doc_number'] ?? null,
+                ]);
+            } else {
+                // update metadata
+                $document->update([
+                    'title'         => $data['title'],
+                    'department_id' => (int) $data['department_id'],
+                    'category_id'   => (int) $data['category_id'],
+                    'doc_number'    => $data['doc_number'] ?? $document->doc_number,
+                ]);
             }
 
-            // Save pdf (optional)
-            $file_path = null; $file_mime = null; $checksum = null;
-            if ($request->hasFile('file')) {
-                $file = $request->file('file');
-                $safeName = $this->safeFilename($file->getClientOriginalName());
-                $filename = now()->timestamp.'_'.Str::random(6).'_'.$safeName;
-                $label = $data['version_label'] ?? 'v1';
-                $file_path = $document->doc_code.'/'.$label.'/'.$filename;
-                $content = file_get_contents($file->getRealPath());
-                $disk->put($file_path, $content);
-                $file_mime = $file->getClientMimeType() ?: 'application/pdf';
-                $checksum = hash('sha256', $content);
-                // duplicate check by checksum (prevent re-upload same file)
-                if ($checksum && DocumentVersion::where('checksum', $checksum)->exists()) {
-                    return redirect()->route('documents.show', $document->id)
-                        ->with('info','File sudah ada (checksum match). Versi tidak dibuat ulang.');
-                }
-            }
-
-            // Create version
+            // Create version (baseline approved)
             $version = new DocumentVersion();
             $version->document_id    = $document->id;
-            $version->version_label  = $data['version_label'] ?? 'v1';
-            $version->status         = (($data['submit_for'] ?? 'save') === 'submit') ? 'submitted' : 'draft';
-            $version->approval_stage = 'KABAG';
-            $version->created_by     = $user->id;
+            $version->version_label  = $versionLabel;
+            $version->status         = 'approved';
+            $version->approval_stage = 'DONE';
+            $version->created_by     = $user?->id ?? null;
             $version->file_path      = $file_path;
             $version->file_mime      = $file_mime;
             $version->checksum       = $checksum;
@@ -345,49 +365,28 @@ class DocumentController extends Controller
                 $version->plain_text  = $clean;
             }
 
+            // Manual timestamps (for import-like baseline creation)
+            $version->timestamps  = false;
+            $version->created_at  = $createdAt;
+            $version->updated_at  = $createdAt;
+            $version->approved_by = $approvedByUserId;
+            $version->approved_at = $approvedAt;
             $version->save();
 
-            // Try synchronous extract from master (docx) if possible
-            if (empty($version->plain_text) && $master_path && $disk->exists($master_path)) {
-                // If master is docx: extract via zip (fast)
-                if (Str::endsWith(strtolower($master_path), '.docx')) {
-                    $binary = $disk->get($master_path);
-                    $ex = $this->extractDocxText($binary);
-                    if ($ex) {
-                        $version->plain_text = $ex;
-                        $version->save();
-                    }
-                } else {
-                    // If .doc (binary): recommended convert to docx externally (libreoffice) or queue a conversion job
-                    // we'll leave extraction to background job / command if needed
-                }
-            }
+            // Update document metadata to reflect new version
+            $document->current_version_id = $version->id;
+            $document->revision_number    = ($document->revision_number ? $document->revision_number + 1 : 1);
+            $document->revision_date      = $approvedAt;
+            $document->save();
 
-            // audit log optional
-            if (class_exists(\App\Models\AuditLog::class)) {
-                \App\Models\AuditLog::create([
-                    'event' => 'upload_version',
-                    'user_id' => $user->id,
-                    'document_id' => $document->id,
-                    'document_version_id' => $version->id,
-                    'detail' => json_encode(['master'=>$master_path,'file'=>$file_path,'submit'=> ($data['submit_for'] ?? 'save')==='submit']),
-                    'ip' => request()->ip(),
-                ]);
-            }
-
-            $msg = ($data['submit_for'] ?? 'save') === 'submit' ? 'Version submitted for approval.' : 'Version saved as draft.';
-
-            return redirect()->route('documents.show',$document->id)->with('success',$msg);
+            return redirect()
+                ->route('documents.show', $document->id)
+                ->with('success', 'Document created/updated as baseline (' . $versionLabel . ').');
         });
     }
 
     /**
      * Compare dua versi (fallback to last 2 versi).
-     *
-     * Accepts:
-     * - versions[]=7&versions[]=8
-     * - ?v1=7&v2=8
-     * - ?version=7 (single -> fallback use latest + provided)
      */
     public function compare(Request $request, $documentId)
     {
@@ -414,7 +413,6 @@ class DocumentController extends Controller
             ->all();
 
         if (count($versions) < 2) {
-            // take two latest versions
             $latest = $doc->versions()->orderByDesc('id')->take(2)->get();
             if ($latest->count() < 2) {
                 return back()->with('error', 'Dokumen ini belum punya 2 versi untuk dibandingkan.');
@@ -439,7 +437,6 @@ class DocumentController extends Controller
         $text2 = $ver2->plain_text ?: ($ver2->pasted_text ?: '(Tidak ada teks)');
 
         $diff = $this->buildDiff($text1, $text2);
-
         $selectedVersions = $versions;
 
         return view('documents.compare', compact('doc', 'ver1', 'ver2', 'diff', 'selectedVersions'));
@@ -454,12 +451,7 @@ class DocumentController extends Controller
         $versions = $document->versions->sortByDesc('id')->values();
         $version  = $versions->first();
 
-        return view('documents.show', [
-            'document' => $document,
-            'versions' => $versions,
-            'version'  => $version,
-            'doc'      => $document,
-        ]);
+        return view('documents.show', compact('document', 'versions', 'version'));
     }
 
     /**
@@ -504,11 +496,11 @@ class DocumentController extends Controller
 
             $file     = $request->file('file');
             $safeName = $this->safeFilename($file->getClientOriginalName());
-            $filename = now()->timestamp.'_'.Str::random(6).'_'.$safeName;
-            $folder   = $document->doc_code.'/'.$validated['version_label'];
-            $file_path = $folder.'/'.$filename;
+            $filename = now()->timestamp . '_' . Str::random(6) . '_' . $safeName;
+            $folder   = $document->doc_code . '/' . $validated['version_label'];
+            $file_path = $folder . '/' . $filename;
 
-            $content   = file_get_contents($file->getRealPath());
+            $content = file_get_contents($file->getRealPath());
             $disk->put($file_path, $content);
             $file_mime = $file->getClientMimeType() ?: 'application/octet-stream';
             $checksum  = hash('sha256', $content);
