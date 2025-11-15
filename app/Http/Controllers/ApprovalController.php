@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Document;
 use App\Models\DocumentVersion;
 use Illuminate\Http\Request;
 use Illuminate\Http\RedirectResponse;
@@ -11,26 +12,13 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
+use Illuminate\Support\Facades\Log;
 use Symfony\Component\HttpFoundation\Response;
 
 class ApprovalController extends Controller
 {
     /**
      * Tampilkan daftar versi yang menunggu approval.
-     *
-     * Rules:
-     * - 'kabag'    => stage KABAG
-     * - 'mr'       => stage MR
-     * - 'director' => stage DIRECTOR
-     * - 'admin'    => semua stage
-     *
-     * Kompatibilitas:
-     * - spatie/laravel-permission (hasRole / hasAnyRole)
-     * - relation roles() di model User
-     * - fallback: whitelist by email
-     *
-     * @param Request $request
-     * @return View
      */
     public function index(Request $request): View
     {
@@ -44,7 +32,6 @@ class ApprovalController extends Controller
             'admin'    => null, // admin melihat semua
         ];
 
-        // helper: cek role (kompatibel spatie atau relation)
         $hasRole = function ($user, string $roleName): bool {
             if (! $user) return false;
 
@@ -52,16 +39,12 @@ class ApprovalController extends Controller
             if (method_exists($user, 'hasRole')) {
                 try {
                     if ($user->hasRole($roleName)) return true;
-                } catch (\Throwable $e) {
-                    // ignore
-                }
+                } catch (\Throwable $e) { /* ignore */ }
             }
             if (method_exists($user, 'hasAnyRole')) {
                 try {
                     if ($user->hasAnyRole([$roleName])) return true;
-                } catch (\Throwable $e) {
-                    // ignore
-                }
+                } catch (\Throwable $e) { /* ignore */ }
             }
 
             // 2) relation roles()
@@ -69,9 +52,7 @@ class ApprovalController extends Controller
                 try {
                     $names = $user->roles()->pluck('name')->map(fn($n) => Str::lower($n))->toArray();
                     if (in_array(Str::lower($roleName), $names, true)) return true;
-                } catch (\Throwable $e) {
-                    // ignore
-                }
+                } catch (\Throwable $e) { /* ignore */ }
             }
 
             // 3) property roles (collection/array)
@@ -79,9 +60,7 @@ class ApprovalController extends Controller
                 try {
                     $names = collect($user->roles)->pluck('name')->map(fn($n) => Str::lower($n))->toArray();
                     if (in_array(Str::lower($roleName), $names, true)) return true;
-                } catch (\Throwable $e) {
-                    // ignore
-                }
+                } catch (\Throwable $e) { /* ignore */ }
             }
 
             // 4) whitelist email
@@ -100,7 +79,7 @@ class ApprovalController extends Controller
         $userStage = null;
         foreach ($roleToStage as $role => $stage) {
             if ($hasRole($user, $role)) {
-                $userStage = $stage; // null => admin => semua stage
+                $userStage = $stage;
                 break;
             }
         }
@@ -110,13 +89,12 @@ class ApprovalController extends Controller
             ->whereIn('status', ['submitted', 'pending', 'in_progress']);
 
         if ($userStage !== null) {
-            // filter sesuai stage (case-insensitive)
             $query->whereRaw('UPPER(COALESCE(approval_stage, \'\')) = ?', [Str::upper($userStage)]);
         }
 
         $pending = $query->orderByDesc('created_at')->paginate(15);
 
-        // variabel bantu untuk kompatibilitas view lama
+        // compat variables for older views
         $pendingVersions = $pending;
         $stage = $userStage;
         $userRoleLabel = $userStage ? Str::upper($userStage) : 'ALL';
@@ -127,13 +105,25 @@ class ApprovalController extends Controller
     /**
      * Approve a document version.
      *
-     * Route-model binding: DocumentVersion $version
-     *
-     * @param Request $request
-     * @param DocumentVersion $version
-     * @return RedirectResponse|\Illuminate\Http\JsonResponse
+     * This is the main method used by routes. Kept name 'approve' for compatibility.
      */
     public function approve(Request $request, DocumentVersion $version)
+    {
+        return $this->handleApprove($request, $version);
+    }
+
+    /**
+     * Alias: approveVersion (some callers may expect this name).
+     */
+    public function approveVersion(Request $request, DocumentVersion $version)
+    {
+        return $this->handleApprove($request, $version);
+    }
+
+    /**
+     * Internal approve handler.
+     */
+    protected function handleApprove(Request $request, DocumentVersion $version)
     {
         $user = $request->user() ?? Auth::user();
 
@@ -194,7 +184,6 @@ class ApprovalController extends Controller
                         }
                     }
 
-                    // update pointer & revision date if kolom tersedia
                     if (Schema::hasColumn($doc->getTable(), 'current_version_id')) {
                         $doc->current_version_id = $version->id;
                     }
@@ -233,18 +222,31 @@ class ApprovalController extends Controller
 
     /**
      * Reject a version and return to Kabag / draft container.
-     *
-     * @param Request $request
-     * @param DocumentVersion $version
-     * @return RedirectResponse|\Illuminate\Http\JsonResponse
      */
     public function reject(Request $request, DocumentVersion $version)
+    {
+        return $this->handleReject($request, $version);
+    }
+
+    /**
+     * Alias: rejectVersion
+     */
+    public function rejectVersion(Request $request, DocumentVersion $version)
+    {
+        return $this->handleReject($request, $version);
+    }
+
+    /**
+     * Internal reject handler.
+     */
+    protected function handleReject(Request $request, DocumentVersion $version)
     {
         $data = $request->validate([
             'notes'  => 'nullable|string|max:2000',
             'reason' => 'nullable|string|max:2000',
+            'note'   => 'nullable|string|max:2000',
         ]);
-        $messageNote = $data['notes'] ?? $data['reason'] ?? null;
+        $messageNote = $data['notes'] ?? $data['reason'] ?? $data['note'] ?? null;
 
         $user = $request->user() ?? Auth::user();
 
@@ -301,9 +303,6 @@ class ApprovalController extends Controller
 
     /**
      * Cek apakah user punya permission approve (spatie or whitelist)
-     *
-     * @param mixed $user
-     * @return bool
      */
     protected function canApprove($user): bool
     {
@@ -313,7 +312,7 @@ class ApprovalController extends Controller
             try {
                 return $user->hasAnyRole(['mr', 'director', 'admin', 'kabag']);
             } catch (\Throwable $e) {
-                // fallback ke whitelist
+                // fallback
             }
         }
 
@@ -351,7 +350,7 @@ class ApprovalController extends Controller
             try {
                 return $user->hasAnyRole($roles);
             } catch (\Throwable $e) {
-                // continue fallback
+                // fallback
             }
         }
 
@@ -361,9 +360,7 @@ class ApprovalController extends Controller
                 foreach ($roles as $r) {
                     if (in_array(Str::lower($r), $names, true)) return true;
                 }
-            } catch (\Throwable $e) {
-                // fallback
-            }
+            } catch (\Throwable $e) { /* fallback */ }
         }
 
         if (isset($user->roles) && is_iterable($user->roles)) {
@@ -403,9 +400,7 @@ class ApprovalController extends Controller
         if ($user && method_exists($user, 'roles')) {
             try {
                 return $user->roles()->pluck('name')->first() ?? 'unknown';
-            } catch (\Throwable $e) {
-                // ignore
-            }
+            } catch (\Throwable $e) { /* ignore */ }
         }
         if ($user && isset($user->roles) && is_iterable($user->roles)) {
             return collect($user->roles)->pluck('name')->first() ?? 'unknown';
@@ -414,9 +409,7 @@ class ApprovalController extends Controller
             try {
                 $names = $user->getRoleNames(); // spatie Collection
                 return $names->first() ?? 'unknown';
-            } catch (\Throwable $e) {
-                // ignore
-            }
+            } catch (\Throwable $e) { /* ignore */ }
         }
         return 'unknown';
     }

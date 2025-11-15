@@ -11,18 +11,39 @@
                 </div>
 
                 <div class="hidden space-x-8 sm:-my-px sm:ms-10 sm:flex">
-                    <x-nav-link :href="route('dashboard.index')" :active="request()->routeIs('dashboard')">
+                    <x-nav-link :href="route('dashboard.index')" :active="request()->routeIs('dashboard.*')">
                         Dashboard
                     </x-nav-link>
+
                     <x-nav-link :href="route('documents.index')" :active="request()->routeIs('documents.*')">
                         Documents
                     </x-nav-link>
+
                     <x-nav-link :href="route('categories.index')" :active="request()->routeIs('categories.*')">
                         Categories
                     </x-nav-link>
+
                     <x-nav-link :href="route('departments.index')" :active="request()->routeIs('departments.*')">
                         Departments
                     </x-nav-link>
+
+                    {{-- Drafts: visible to roles kabag, admin, mr --}}
+                    @auth
+                        @if(auth()->user()->hasAnyRole(['kabag','admin','mr']))
+                            <x-nav-link :href="route('drafts.index')" :active="request()->routeIs('drafts.*')">
+                                Drafts
+                            </x-nav-link>
+                        @endif
+                    @endauth
+
+                    {{-- Approval queue: only show to MR and Director --}}
+                    @auth
+                        @if(auth()->user()->hasAnyRole(['mr','director']))
+                            <x-nav-link :href="route('approval.index')" :active="request()->routeIs('approval.*')">
+                                Approval
+                            </x-nav-link>
+                        @endif
+                    @endauth
                 </div>
             </div>
 
@@ -70,10 +91,24 @@
     {{-- Responsive menu (sama struktur agar tidak mengubah ukuran/behavior) --}}
     <div :class="{ 'block': open, 'hidden': !open }" class="hidden sm:hidden">
         <div class="pt-2 pb-3 space-y-1">
-            <x-responsive-nav-link :href="route('dashboard.index')" :active="request()->routeIs('dashboard')">Dashboard</x-responsive-nav-link>
+            <x-responsive-nav-link :href="route('dashboard.index')" :active="request()->routeIs('dashboard.*')">Dashboard</x-responsive-nav-link>
             <x-responsive-nav-link :href="route('documents.index')" :active="request()->routeIs('documents.*')">Documents</x-responsive-nav-link>
             <x-responsive-nav-link :href="route('categories.index')" :active="request()->routeIs('categories.*')">Categories</x-responsive-nav-link>
             <x-responsive-nav-link :href="route('departments.index')" :active="request()->routeIs('departments.*')">Departments</x-responsive-nav-link>
+
+            {{-- Responsive: Drafts (same visibility rules as desktop) --}}
+            @auth
+                @if(auth()->user()->hasAnyRole(['kabag','admin','mr']))
+                    <x-responsive-nav-link :href="route('drafts.index')" :active="request()->routeIs('drafts.*')">Drafts</x-responsive-nav-link>
+                @endif
+            @endauth
+
+            {{-- Responsive: Approval (only MR & Director) --}}
+            @auth
+                @if(auth()->user()->hasAnyRole(['mr','director']))
+                    <x-responsive-nav-link :href="route('approval.index')" :active="request()->routeIs('approval.*')">Approval</x-responsive-nav-link>
+                @endif
+            @endauth
         </div>
 
         <div class="pt-4 pb-1 border-t border-gray-200 dark:border-gray-600">

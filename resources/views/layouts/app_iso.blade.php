@@ -118,27 +118,24 @@
             z-index: 1000;
         }
 
-        .dropdown-menu button,
-        .dropdown-menu a {
+        .dropdown-menu button {
             display: block;
             width: 100%;
             padding: 10px 14px;
-            text-decoration: none;
-            color: #333;
-            background: none;
             border: none;
+            background: none;
             text-align: left;
             cursor: pointer;
             font-size: 14px;
+            color: #333;
         }
 
-        .dropdown-menu a:hover,
         .dropdown-menu button:hover {
             background: #f2f6ff;
             color: var(--brand);
         }
 
-        /* PAGE WRAPPER */
+        /* PAGE */
         .page {
             background: #ffffff;
             margin-top: 20px;
@@ -151,83 +148,107 @@
 
 <body>
 
-    {{-- NAVBAR --}}
-    <div class="topbar">
-        <div class="container nav">
+{{-- NAVBAR --}}
+<div class="topbar">
+    <div class="container nav">
 
-            {{-- Brand --}}
-            <div class="brand-wrap">
-                <img src="{{ asset('images/logo-peroni.png') }}" alt="Logo">
-                <div>
-                    <div class="brand-title">Document and Control</div>
-                    <div class="brand-sub">Peroni Karya Sentra Management ISO Program</div>
-                </div>
+        {{-- Brand --}}
+        <div class="brand-wrap">
+            <img src="{{ asset('images/logo-peroni.png') }}" alt="Logo">
+            <div>
+                <div class="brand-title">Document and Control</div>
+                <div class="brand-sub">Peroni Karya Sentra Management ISO Program</div>
             </div>
+        </div>
 
-            {{-- Menu --}}
-            <nav class="menu">
-                <a href="{{ route('dashboard.index') }}" class="{{ request()->routeIs('dashboard') ? 'active' : '' }}">Dashboard</a>
-                <a href="{{ route('documents.index') }}" class="{{ request()->routeIs('documents.*') ? 'active' : '' }}">Documents</a>
-                <a href="{{ route('categories.index') }}" class="{{ request()->routeIs('categories.*') ? 'active' : '' }}">Kategori</a>
-                <a href="{{ route('departments.index') }}" class="{{ request()->routeIs('departments.*') ? 'active' : '' }}">Departemen</a>
-                <a href="{{ route('approval.index') }}" class="{{ request()->routeIs('approval.*') ? 'active' : '' }}">Approval Queue</a>
-                <a href="{{ route('revision.index') }}" class="{{ request()->routeIs('revision.*') ? 'active' : '' }}">Revision History</a>
-                <a href="{{ route('audit.index') }}" class="{{ request()->routeIs('audit.*') ? 'active' : '' }}">Audit Log</a>
-            </nav>
+        {{-- MENU --}}
+        <nav class="menu">
 
-            {{-- User --}}
-            <div class="user-menu dropdown">
+            <a href="{{ route('dashboard.index') }}"
+               class="{{ request()->routeIs('dashboard.*') ? 'active' : '' }}">
+                Dashboard
+            </a>
 
-                @php
-                    $email = strtolower(Auth::user()->email);
-                    $username = explode('@', $email)[0];
-                @endphp
+            <a href="{{ route('documents.index') }}"
+               class="{{ request()->routeIs('documents.*') ? 'active' : '' }}">
+                Documents
+            </a>
 
-                <button class="user-btn dropdown-toggle">
-                    {{ $username }} ▼
-                </button>
+            <a href="{{ route('departments.index') }}"
+               class="{{ request()->routeIs('departments.*') ? 'active' : '' }}">
+                Departemen
+            </a>
 
-                <div class="dropdown-menu">
-                    <form method="POST" action="{{ route('logout') }}">
-                        @csrf
-                        <button type="submit" class="dropdown-item text-danger">
-                            Logout
-                        </button>
-                    </form>
-                </div>
+            {{-- DRAFTS: tampil untuk semua user login --}}
+            @auth
+                <a href="{{ route('drafts.index') }}"
+                   class="{{ request()->routeIs('drafts.*') ? 'active' : '' }}">
+                    Drafts
+                </a>
+            @endauth
 
+            {{-- APPROVAL: hanya MR dan Director --}}
+            @auth
+                @if(auth()->user()->hasAnyRole(['mr','director']))
+                    <a href="{{ route('approval.index') }}"
+                       class="{{ request()->routeIs('approval.*') ? 'active' : '' }}">
+                        Approval Queue
+                    </a>
+                @endif
+            @endauth
+
+        </nav>
+
+        {{-- USER --}}
+        <div class="user-menu dropdown">
+
+            @php
+                $email = strtolower(Auth::user()->email);
+                $username = explode('@', $email)[0];
+            @endphp
+
+            <button class="user-btn dropdown-toggle">
+                {{ $username }} ▼
+            </button>
+
+            <div class="dropdown-menu">
+                <form method="POST" action="{{ route('logout') }}">
+                    @csrf
+                    <button type="submit" class="dropdown-item">Logout</button>
+                </form>
             </div>
-
         </div>
+
     </div>
+</div>
 
-    {{-- PAGE CONTENT --}}
-    <div class="container">
-        <div class="page">
-            @yield('content')
-        </div>
+{{-- PAGE CONTENT --}}
+<div class="container">
+    <div class="page">
+        @yield('content')
     </div>
+</div>
 
-    {{-- Dropdown Script --}}
-    <script>
-        document.addEventListener("DOMContentLoaded", function () {
-            const toggle = document.querySelector(".dropdown-toggle");
-            const menu = document.querySelector(".dropdown-menu");
+{{-- Dropdown Script --}}
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+    const toggle = document.querySelector(".dropdown-toggle");
+    const menu = document.querySelector(".dropdown-menu");
 
-            if (toggle && menu) {
-                toggle.addEventListener("click", function (e) {
-                    e.stopPropagation();
-                    menu.style.display = menu.style.display === "block" ? "none" : "block";
-                });
-            }
-
-            document.addEventListener("click", function (e) {
-                if (!e.target.closest(".dropdown")) {
-                    menu.style.display = "none";
-                }
-            });
+    if (toggle && menu) {
+        toggle.addEventListener("click", function (e) {
+            e.stopPropagation();
+            menu.style.display = menu.style.display === "block" ? "none" : "block";
         });
-    </script>
+    }
+
+    document.addEventListener("click", function (e) {
+        if (!e.target.closest(".dropdown")) {
+            menu.style.display = "none";
+        }
+    });
+});
+</script>
 
 </body>
 </html>

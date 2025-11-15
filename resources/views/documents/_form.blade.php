@@ -81,8 +81,9 @@
     <input type="hidden" name="approved_by" value="{{ old('approved_by') }}">
 
     <div class="form-row" style="display:flex; gap:8px; align-items:center;">
-        <button class="btn" type="submit" name="submit_for" value="save">Save</button>
-        <button class="btn" type="submit" name="submit_for" value="submit">Save &amp; Submit</button>
+        {{-- Hanya Save Draft --}}
+        <button class="btn btn-primary" type="submit" name="submit_for" value="save">Save Draft</button>
+        <a href="{{ route('drafts.index') }}" class="btn btn-muted">Open Drafts</a>
         <a href="{{ route('documents.index') }}" class="btn-muted">Cancel</a>
     </div>
 </form>
