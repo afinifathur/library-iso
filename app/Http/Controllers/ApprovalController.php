@@ -24,18 +24,19 @@ class ApprovalController extends Controller
     {
         $user = $request->user() ?? Auth::user();
 
-        // mapping role -> approval_stage (urutkan prioritas)
-        $roleToStage = [
-            'kabag'    => 'KABAG',
-            'mr'       => 'MR',
-            'director' => 'DIRECTOR',
-            'admin'    => null, // admin melihat semua
+        // Mapping role -> canonical stage(s). Use arrays to accept multiple DB variants.
+        $roleToStages = [
+            'kabag'    => ['KABAG'],
+            'mr'       => ['MR'],
+            'director' => ['DIR', 'DIRECTOR'], // accept DIR or DIRECTOR in DB
+            'admin'    => null, // admin lihat semua
         ];
 
+        // helper untuk pengecekan role sederhana (tolerant terhadap berbagai implementasi)
         $hasRole = function ($user, string $roleName): bool {
             if (! $user) return false;
 
-            // 1) spatie
+            // spatie
             if (method_exists($user, 'hasRole')) {
                 try {
                     if ($user->hasRole($roleName)) return true;
@@ -47,7 +48,7 @@ class ApprovalController extends Controller
                 } catch (\Throwable $e) { /* ignore */ }
             }
 
-            // 2) relation roles()
+            // relation roles()
             if (method_exists($user, 'roles')) {
                 try {
                     $names = $user->roles()->pluck('name')->map(fn($n) => Str::lower($n))->toArray();
@@ -55,7 +56,7 @@ class ApprovalController extends Controller
                 } catch (\Throwable $e) { /* ignore */ }
             }
 
-            // 3) property roles (collection/array)
+            // property roles (collection/array)
             if (isset($user->roles) && is_iterable($user->roles)) {
                 try {
                     $names = collect($user->roles)->pluck('name')->map(fn($n) => Str::lower($n))->toArray();
@@ -63,41 +64,47 @@ class ApprovalController extends Controller
                 } catch (\Throwable $e) { /* ignore */ }
             }
 
-            // 4) whitelist email
+            // whitelist emails
             $whitelist = [
                 'direktur@peroniks.com',
                 'adminqc@peroniks.com',
             ];
             if (! empty($user->email) && in_array(Str::lower($user->email), array_map('strtolower', $whitelist), true)) {
+                // grant common roles for whitelist
                 if (in_array(Str::lower($roleName), ['admin','director','mr','kabag'], true)) return true;
             }
 
             return false;
         };
 
-        // tentukan stage berdasarkan role (first match)
+        // tentukan userStage (choose first matching role in $roleToStages)
         $userStage = null;
-        foreach ($roleToStage as $role => $stage) {
+        foreach ($roleToStages as $role => $stages) {
             if ($hasRole($user, $role)) {
-                $userStage = $stage;
+                // $stages === null means admin/all
+                $userStage = $stages; // array|null
                 break;
             }
         }
 
-        // base query: eager load relasi yang sering dipakai di view
+        // Base query: eager load relasi yang dipakai di view
         $query = DocumentVersion::with(['document.department', 'creator', 'document'])
             ->whereIn('status', ['submitted', 'pending', 'in_progress']);
 
-        if ($userStage !== null) {
-            $query->whereRaw('UPPER(COALESCE(approval_stage, \'\')) = ?', [Str::upper($userStage)]);
-        }
+        // Jika user bukan admin (userStage !== null && bukan null array), filter berdasarkan stage(s)
+        if (is_array($userStage)) {
+            // UPPER(COALESCE(approval_stage,'')) in (STAGE1, STAGE2)
+            $upperStages = array_map(fn($s) => Str::upper($s), $userStage);
+            $query->whereIn(DB::raw('UPPER(COALESCE(approval_stage, \'\'))'), $upperStages);
+        } // if userStage === null => admin => no stage filter
 
         $pending = $query->orderByDesc('created_at')->paginate(15);
 
-        // compat variables for older views
+        // compatibility variables for older views
         $pendingVersions = $pending;
-        $stage = $userStage;
-        $userRoleLabel = $userStage ? Str::upper($userStage) : 'ALL';
+        // For display: pick a single label if available, otherwise 'ALL'
+        $stage = is_array($userStage) ? ($userStage[0] ?? null) : null;
+        $userRoleLabel = $stage ? Str::upper($stage) : 'ALL';
 
         return view('approval.index', compact('pending', 'pendingVersions', 'stage', 'userRoleLabel'));
     }
@@ -105,7 +112,7 @@ class ApprovalController extends Controller
     /**
      * Approve a document version.
      *
-     * This is the main method used by routes. Kept name 'approve' for compatibility.
+     * Deprecated: kept name 'approve' for routes compatibility.
      */
     public function approve(Request $request, DocumentVersion $version)
     {
@@ -113,7 +120,7 @@ class ApprovalController extends Controller
     }
 
     /**
-     * Alias: approveVersion (some callers may expect this name).
+     * Alias for approve.
      */
     public function approveVersion(Request $request, DocumentVersion $version)
     {
@@ -141,7 +148,10 @@ class ApprovalController extends Controller
         ]);
         $note = $validated['note'] ?? $validated['notes'] ?? null;
 
-        $currentStage = Str::upper($version->approval_stage ?? 'KABAG');
+        $currentStageRaw = Str::upper($version->approval_stage ?? 'KABAG');
+
+        // normalize current stage: allow DIR/DIRECTOR equivalence
+        $currentStage = $this->normalizeStage($currentStageRaw);
         $nextStage = $this->nextApprovalStage($currentStage);
 
         if (! $this->roleMatchesStage($user, $currentStage)) {
@@ -158,11 +168,15 @@ class ApprovalController extends Controller
             );
 
             if ($nextStage === 'DONE') {
-                // final approval
+                // Final approval: mark approved and update document
                 $version->status = 'approved';
                 $version->approval_stage = 'DONE';
-                $version->approved_by = $user->id;
-                $version->approved_at = now();
+                if (Schema::hasColumn($version->getTable(), 'approved_by')) {
+                    $version->approved_by = $user->id;
+                }
+                if (Schema::hasColumn($version->getTable(), 'approved_at')) {
+                    $version->approved_at = now();
+                }
 
                 if (Schema::hasColumn($version->getTable(), 'approval_note')) {
                     $version->approval_note = $note;
@@ -176,7 +190,7 @@ class ApprovalController extends Controller
                 // update document current version atomically
                 $doc = $version->document()->lockForUpdate()->first();
                 if ($doc) {
-                    if ($doc->current_version_id && $doc->current_version_id != $version->id) {
+                    if (!empty($doc->current_version_id) && $doc->current_version_id != $version->id) {
                         $old = DocumentVersion::find($doc->current_version_id);
                         if ($old && ! in_array($old->status, ['approved', 'rejected', 'superseded'], true)) {
                             $old->status = 'superseded';
@@ -193,9 +207,10 @@ class ApprovalController extends Controller
                     $doc->save();
                 }
             } else {
-                // lanjut ke tahap berikutnya (MR / DIRECTOR)
+                // move to next stage (MR / DIRECTOR)
                 $version->status = 'submitted';
-                $version->approval_stage = $nextStage;
+                // store canonical next stage; use 'DIRECTOR' rather than 'DIR' for clarity
+                $version->approval_stage = $nextStage === 'DIRECTOR' ? 'DIRECTOR' : $nextStage;
 
                 if (Schema::hasColumn($version->getTable(), 'approval_note')) {
                     $version->approval_note = $note;
@@ -208,7 +223,7 @@ class ApprovalController extends Controller
             }
         });
 
-        // invalidate cache dashboard
+        // invalidate dashboard cache if used
         Cache::forget('dashboard.payload');
 
         if ($currentStage === 'MR' && $nextStage === 'DIRECTOR') {
@@ -229,7 +244,7 @@ class ApprovalController extends Controller
     }
 
     /**
-     * Alias: rejectVersion
+     * Alias for reject.
      */
     public function rejectVersion(Request $request, DocumentVersion $version)
     {
@@ -254,7 +269,8 @@ class ApprovalController extends Controller
             return $this->finalizedResponse($request, 'Version already finalized.');
         }
 
-        $currentStage = Str::upper($version->approval_stage ?? 'KABAG');
+        $currentStage = $this->normalizeStage(Str::upper($version->approval_stage ?? 'KABAG'));
+
         if (! $this->roleMatchesStage($user, $currentStage)) {
             return $this->forbiddenResponse($request, 'Unauthorized for this stage.');
         }
@@ -269,6 +285,7 @@ class ApprovalController extends Controller
             );
 
             $version->status = 'rejected';
+            // returned to KABAG for revision
             $version->approval_stage = 'KABAG';
 
             if (Schema::hasColumn($version->getTable(), 'approval_notes')) {
@@ -312,7 +329,7 @@ class ApprovalController extends Controller
             try {
                 return $user->hasAnyRole(['mr', 'director', 'admin', 'kabag']);
             } catch (\Throwable $e) {
-                // fallback
+                // fallback to whitelist
             }
         }
 
@@ -324,11 +341,26 @@ class ApprovalController extends Controller
     }
 
     /**
+     * Normalize stage token to canonical set we use internally.
+     * Accepts variants like 'DIR' / 'DIRECTOR' -> returns 'DIRECTOR',
+     * 'KABAG' -> 'KABAG', 'MR' -> 'MR', 'DONE' -> 'DONE'.
+     */
+    protected function normalizeStage(string $stage): string
+    {
+        $s = Str::upper(trim($stage));
+        if (Str::startsWith($s, 'DIR')) return 'DIRECTOR';
+        if (Str::startsWith($s, 'MR')) return 'MR';
+        if (Str::startsWith($s, 'KAB')) return 'KABAG';
+        if ($s === 'DONE') return 'DONE';
+        return $s;
+    }
+
+    /**
      * Apakah role user cocok dengan sebuah stage
      */
     protected function roleMatchesStage($user, string $stage): bool
     {
-        $s = Str::upper($stage);
+        $s = $this->normalizeStage($stage);
 
         return match ($s) {
             'KABAG'    => $this->userHasAnyRole($user, ['kabag', 'admin']),
@@ -380,11 +412,13 @@ class ApprovalController extends Controller
     }
 
     /**
-     * Next approval stage after current
+     * Next approval stage after current (canonical values).
      */
     protected function nextApprovalStage(string $current): string
     {
-        return match (Str::upper($current)) {
+        $c = $this->normalizeStage($current);
+
+        return match ($c) {
             'KABAG'    => 'MR',
             'MR'       => 'DIRECTOR',
             'DIRECTOR' => 'DONE',
@@ -397,6 +431,12 @@ class ApprovalController extends Controller
      */
     protected function getCurrentRoleName($user): string
     {
+        if ($user && method_exists($user, 'getRoleNames')) {
+            try {
+                $names = $user->getRoleNames(); // spatie Collection
+                return $names->first() ?? 'unknown';
+            } catch (\Throwable $e) { /* ignore */ }
+        }
         if ($user && method_exists($user, 'roles')) {
             try {
                 return $user->roles()->pluck('name')->first() ?? 'unknown';
@@ -404,12 +444,6 @@ class ApprovalController extends Controller
         }
         if ($user && isset($user->roles) && is_iterable($user->roles)) {
             return collect($user->roles)->pluck('name')->first() ?? 'unknown';
-        }
-        if ($user && method_exists($user, 'getRoleNames')) {
-            try {
-                $names = $user->getRoleNames(); // spatie Collection
-                return $names->first() ?? 'unknown';
-            } catch (\Throwable $e) { /* ignore */ }
         }
         return 'unknown';
     }

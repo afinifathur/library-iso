@@ -77,7 +77,7 @@
         z-index:99999;
     }
 
-    .dropdown-menu button {
+    .dropdown-menu button, .dropdown-menu a {
         width:100%;
         text-align:left;
         padding:10px 14px;
@@ -85,8 +85,11 @@
         background:#fff;
         font-size:14px;
         cursor:pointer;
+        display:block;
+        color:inherit;
+        text-decoration:none;
     }
-    .dropdown-menu button:hover {
+    .dropdown-menu button:hover, .dropdown-menu a:hover {
         background:#eef7ff;
         color:#0b5ed7;
     }
@@ -128,21 +131,21 @@
 
           {{-- Audit Log — ONLY MR & DIRECTOR --}}
           @auth
-              @if(auth()->user()->hasAnyRole(['mr','director']))
+              @if(method_exists(auth()->user(),'hasAnyRole') && auth()->user()->hasAnyRole(['mr','director']))
                   <a href="{{ route('audit.index') }}" class="{{ request()->routeIs('audit.*') ? 'active' : '' }}">Audit Log</a>
               @endif
           @endauth
 
           {{-- Drafts — kabag, admin, mr, director --}}
           @auth
-              @if(auth()->user()->hasAnyRole(['kabag','admin','mr','director']))
+              @if(method_exists(auth()->user(),'hasAnyRole') && auth()->user()->hasAnyRole(['kabag','admin','mr','director']))
                   <a href="{{ route('drafts.index') }}" class="{{ request()->routeIs('drafts.*') ? 'active' : '' }}">Drafts</a>
               @endif
           @endauth
 
           {{-- Approval Queue — ONLY MR & DIRECTOR --}}
           @auth
-              @if(auth()->user()->hasAnyRole(['mr','director']))
+              @if(method_exists(auth()->user(),'hasAnyRole') && auth()->user()->hasAnyRole(['mr','director']))
                   <a href="{{ route('approval.index') }}" class="{{ request()->routeIs('approval.*') ? 'active' : '' }}">Approval Queue</a>
               @endif
           @endauth
@@ -151,8 +154,13 @@
           @auth
             <div class="dropdown" style="margin-left:12px;">
               @php
-                $email = Auth::user()->email ?? '';
-                $username = $email ? explode('@', strtolower($email))[0] : Auth::user()->name ?? 'user';
+                // prefer full name if available, fallback to email prefix
+                $user = auth()->user();
+                $username = $user->name ?? '';
+                if (empty($username) && ($user->email ?? '') !== '') {
+                  $username = explode('@', strtolower($user->email))[0];
+                }
+                $username = e($username);
               @endphp
 
               <button class="dropdown-toggle" type="button" aria-haspopup="true" aria-expanded="false">
@@ -173,7 +181,7 @@
       </header>
     @endif
 
-    {{-- Flash messages --}}
+    {{-- FLASH & VALIDATION MESSAGES --}}
     <div class="container-messages" style="max-width:1200px;margin:12px auto;">
       @if(session('success'))
         <div style="margin-bottom:12px;padding:10px;border-radius:8px;background:#ecfdf5;color:#064e3b;">{{ session('success') }}</div>
@@ -183,6 +191,18 @@
       @endif
       @if(session('info'))
         <div style="margin-bottom:12px;padding:10px;border-radius:8px;background:#eff6ff;color:#1e3a8a;">{{ session('info') }}</div>
+      @endif
+
+      {{-- Validation errors (clear and visible) --}}
+      @if ($errors->any())
+        <div style="margin-bottom:12px;padding:12px;border-radius:8px;background:#fff7ed;color:#663c00;">
+          <strong>There are some problems with your input:</strong>
+          <ul style="margin:8px 0 0 18px;padding:0;">
+            @foreach ($errors->all() as $err)
+              <li>{{ $err }}</li>
+            @endforeach
+          </ul>
+        </div>
       @endif
     </div>
 
@@ -209,7 +229,7 @@
       const menu = document.createElement('div');
       menu.className = 'dropdown-menu';
       menu.style.display = 'none';
-      menu.innerHTML = inlineMenu ? inlineMenu.innerHTML : '<form method="POST" action="{{ route("logout") }}">@csrf<button type="submit">Logout</button></form>';
+      menu.innerHTML = inlineMenu ? inlineMenu.innerHTML : '<form method="POST" action="{{ route('logout') }}">@csrf<button type="submit">Logout</button></form>';
       document.body.appendChild(menu);
 
       function positionMenu() {
@@ -268,5 +288,7 @@
       }, { passive: true });
     });
   </script>
+
+  @stack('scripts')
 </body>
 </html>

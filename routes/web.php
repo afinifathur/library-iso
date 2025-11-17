@@ -88,6 +88,11 @@ Route::middleware('auth')->group(function () {
         Route::get('{version}',                      [DocumentVersionController::class, 'show'])
             ->whereNumber('version')->name('show');
 
+        // ===== added: mark version as viewed (POST) =====
+        Route::post('{version}/mark-viewed',         [DocumentVersionController::class, 'markViewed'])
+            ->whereNumber('version')->name('markViewed');
+        // =================================================
+
         Route::post('{version}/submit',              [DocumentVersionController::class, 'submitForApproval'])
             ->whereNumber('version')->name('submit');
 
@@ -97,9 +102,14 @@ Route::middleware('auth')->group(function () {
         Route::put('{version}',                      [DocumentVersionController::class, 'update'])
             ->whereNumber('version')->name('update');
 
-        // Optional: choose compare
-        Route::get('{version}/choose-compare',       [DocumentVersionController::class, 'chooseCompare'])
+        // NOTE: choose-compare handler lives on DocumentController (chooseCompare)
+        // Map the choose-compare routes to DocumentController::chooseCompare so the
+        // controller method is found and blade checks for either route name succeed.
+        Route::get('{version}/choose-compare',       [DocumentController::class, 'chooseCompare'])
             ->whereNumber('version')->name('chooseCompare');
+
+        Route::get('{version}/choose_compare',       [DocumentController::class, 'chooseCompare'])
+            ->whereNumber('version')->name('choose_compare');
     });
 
     /*

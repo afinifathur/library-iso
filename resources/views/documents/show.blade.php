@@ -5,21 +5,37 @@
 
 @section('content')
 @php
-    // Tentukan target versi untuk submit approval:
-    // urutan prioritas: versi yang sedang dibuka -> relasi currentVersion -> field current_version_id
-    $submitVersionId = $version->id
-        ?? ($document->currentVersion->id ?? null)
+    $currentUser = auth()->user();
+
+    // Tentukan versi yang tampil saat ini (prioritas: query ?version_id= -> $version hadir -> document->currentVersion -> document->current_version_id)
+    $submitVersionId = request()->query('version_id')
+        ?? $version->id ?? ($document->currentVersion->id ?? null)
         ?? ($document->current_version_id ?? null);
 
-    $canShowSubmit =
-        auth()->check()
-        && auth()->user()->hasRole('kabag')
-        && $submitVersionId;
-
     // Cek status final untuk sembunyikan tombol bila sudah final
-    $currentStatus = $version->status
-        ?? ($document->currentVersion->status ?? null);
+    $currentStatus = $version->status ?? ($document->currentVersion->status ?? null);
     $isFinal = in_array($currentStatus, ['approved', 'rejected'], true);
+
+    // Cari apakah current user punya draft untuk dokumen ini (draft milik user, status 'draft', stage KABAG)
+    $userDraft = null;
+    if ($currentUser) {
+        // Jika $document->versions() adalah relation Eloquent, ini akan bekerja.
+        try {
+            $userDraft = $document->versions()
+                ->where('status', 'draft')
+                ->where('created_by', $currentUser->id)
+                ->where('approval_stage', 'KABAG')
+                ->latest('id')
+                ->first();
+        } catch (\Throwable $e) {
+            // fallback: jika versions() tidak tersedia, coba koleksi $versions yg diberikan ke view
+            $userDraft = collect($versions ?? [])->first(function($v) use ($currentUser) {
+                return ($v->status ?? '') === 'draft'
+                    && ($v->created_by ?? null) == $currentUser->id
+                    && ($v->approval_stage ?? '') === 'KABAG';
+            });
+        }
+    }
 @endphp
 
 <div class="app-container" style="max-width:1200px;margin:18px auto;">
@@ -47,12 +63,22 @@
           <a class="btn-muted" href="{{ route('documents.compare', $document->id ?? 0) }}">Compare</a>
         @endif
 
-        {{-- NEW: Submit for Approval (role: kabag) --}}
-        @if($canShowSubmit && ! $isFinal)
-          <form method="POST" action="{{ route('versions.submit', $submitVersionId) }}" style="display:inline;">
-            @csrf
-            <button type="submit" class="btn btn-primary">Submit for Approval</button>
-          </form>
+        {{-- SUBMIT: tampilkan hanya bila user punya draft untuk dokumen ini (mencegah submit ganda) --}}
+        @if($userDraft && ! $isFinal)
+          <div style="display:inline-flex;gap:8px;align-items:center;">
+            <form method="POST" action="{{ route('drafts.submit', $userDraft->id) }}" style="display:inline;">
+              @csrf
+              <button type="submit" class="btn btn-primary" onclick="return confirm('Kirim draft ini untuk approval?')">
+                Submit Draft for Approval
+              </button>
+            </form>
+
+            <a class="btn" href="{{ route('drafts.show', $userDraft->id) }}">Open My Draft</a>
+          </div>
+        @else
+          {{-- Untuk pengguna dengan peran khusus (mis. kabag) yang ingin submit langsung versi tertentu,
+               kamu bisa menampilkan tombol alternatif di sini jika diperlukan. Saat ini sengaja disembunyikan
+               agar hanya draft milik user yang dapat disubmit. --}}
         @endif
       </div>
 
@@ -119,7 +145,7 @@
           <option value="DE"  {{ $cat==='DE'  ? 'selected' : '' }}>DE - Dokumen Eksternal</option>
         </select>
 
-        {{-- Document code (optional; akan di-generate jika kosong) --}}
+        {{-- Document code --}}
         <label for="doc_code" style="margin-top:8px">Document code</label>
         <input id="doc_code" type="text" name="doc_code" value="{{ old('doc_code', $document->doc_code) }}" class="input" placeholder="Kosongkan untuk auto-generate">
 

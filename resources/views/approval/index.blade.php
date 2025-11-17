@@ -1,3 +1,4 @@
+{{-- resources/views/approval/index.blade.php --}}
 @extends('layouts.iso')
 
 @section('title', 'Approval Queue')
@@ -25,8 +26,6 @@
     <div class="mb-3" style="display:flex;gap:8px;align-items:center;margin-top:1rem">
         <a href="{{ route('drafts.index') }}" class="btn">Draft Container</a>
         <button class="btn btn-muted" onclick="location.reload()">Refresh</button>
-
-        <button id="compareSelectedBtn" class="btn btn-outline-secondary" style="margin-left:10px;">Compare selected</button>
     </div>
 
     <section class="table-responsive card-section card-inner" aria-labelledby="pendingTableTitle">
@@ -47,8 +46,21 @@
             </thead>
             <tbody>
                 @php
-                    // controller may provide $pendingVersions or $pending
                     $rows = $pendingVersions ?? $pending ?? collect();
+
+                    // compute current user roles once (robust)
+                    $currentUser = auth()->user();
+                    $userRoleNames = [];
+                    if ($currentUser) {
+                        if (method_exists($currentUser, 'getRoleNames')) {
+                            try { $userRoleNames = $currentUser->getRoleNames()->map(fn($n)=>strtolower($n))->toArray(); } catch (\Throwable $e) {}
+                        } elseif (method_exists($currentUser, 'roles')) {
+                            try { $userRoleNames = $currentUser->roles()->pluck('name')->map(fn($n)=>strtolower($n))->toArray(); } catch (\Throwable $e) {}
+                        } elseif (isset($currentUser->roles) && is_iterable($currentUser->roles)) {
+                            $userRoleNames = collect($currentUser->roles)->pluck('name')->map(fn($n)=>strtolower($n))->toArray();
+                        }
+                    }
+                    $globalCanApprove = !empty($currentUser) && (in_array('mr', $userRoleNames, true) || in_array('director', $userRoleNames, true) || in_array('admin', $userRoleNames, true));
                 @endphp
 
                 @forelse($rows as $v)
@@ -62,6 +74,11 @@
                         $creator = optional($v->creator ?? $v->created_by_user);
                         $creatorDisplay = $creator->email ?? $creator->name ?? '-';
                         $when = optional($v->created_at)->format('Y-m-d') ?? '-';
+
+                        // determine if MR has viewed this version
+                        $seenByMr = !empty($v->mr_viewed_at);
+                        // row-level permission to approve/reject
+                        $canApproveThis = $globalCanApprove && $seenByMr;
                     @endphp
 
                     <tr data-version-id="{{ e($v->id) }}" data-doc-id="{{ e($docId) }}">
@@ -86,7 +103,7 @@
                         <td>{{ e($when) }}</td>
 
                         <td>
-                            <div class="action-buttons" style="display:flex;gap:6px;flex-wrap:wrap">
+                            <div class="action-buttons" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
                                 <!-- Open -->
                                 @if($v->id)
                                     <a href="{{ route('versions.show', $v->id) }}" target="_blank" rel="noopener noreferrer" class="btn btn-outline-primary btn-sm action-open" aria-label="Open version {{ e($versionLabel) }}">Open</a>
@@ -94,28 +111,32 @@
                                     <button class="btn btn-outline-primary btn-sm" disabled>Open</button>
                                 @endif
 
-                                <!-- Compare (single) -> link to document compare with version param -->
-                                @if($docId)
-                                    <a href="{{ route('documents.compare', $docId) }}?v2={{ $v->id }}" target="_blank" rel="noopener noreferrer" class="btn btn-outline-secondary btn-sm action-compare" aria-label="Compare version {{ e($versionLabel) }}">Compare</a>
-                                @else
-                                    <button class="btn btn-outline-secondary btn-sm" disabled>Compare</button>
-                                @endif
-
                                 <!-- Approve (form) -->
                                 <form method="POST" action="{{ route('approval.approve', $v->id) }}" class="d-inline-block action-form-approve" style="display:inline">
                                     @csrf
-                                    <button type="submit" class="btn btn-success btn-sm btn-approve" disabled aria-disabled="true">Approve</button>
+                                    <button type="submit"
+                                            class="btn btn-success btn-sm btn-approve"
+                                            @unless($canApproveThis) disabled aria-disabled="true" @endunless>
+                                        Approve
+                                    </button>
                                 </form>
 
                                 <!-- Reject -->
                                 <button type="button"
                                         class="btn btn-danger btn-sm btn-reject"
-                                        disabled
+                                        @unless($canApproveThis) disabled aria-disabled="true" @endunless
                                         data-version-id="{{ e($v->id) }}"
                                         data-doc-code="{{ e($docCode) }}"
                                         aria-label="Reject version {{ e($versionLabel) }}">
                                     Reject
                                 </button>
+
+                                {{-- Indicator when mr_viewed_at is missing --}}
+                                @unless($seenByMr)
+                                    <span class="small-muted" title="Menunggu MR membuka dokumen" style="font-size:12px;margin-left:6px;">(Waiting MR)</span>
+                                @else
+                                    <span class="text-success" style="font-size:12px;margin-left:6px;" title="Viewed by MR">Viewed</span>
+                                @endunless
                             </div>
                         </td>
                     </tr>
@@ -133,25 +154,25 @@
     </div>
 </div>
 
-<!-- Reject Modal -->
-<div id="rejectModal" class="modal-overlay" aria-hidden="true" style="display:none;">
-  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="rejectModalTitle">
+{{-- Reject Modal --}}
+<div id="rejectModal" class="modal-overlay" aria-hidden="true" style="display:none;position:fixed;inset:0;align-items:center;justify-content:center;background:rgba(0,0,0,0.35);z-index:2000;">
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="rejectModalTitle" style="background:#fff;padding:16px;border-radius:8px;max-width:520px;width:90%;">
     <div class="modal-header" style="display:flex;justify-content:space-between;align-items:center">
       <h3 id="rejectModalTitle" style="margin:0">Alasan Reject <span id="rejectDocCode" class="fw-bold"></span></h3>
       <button class="modal-close" type="button" onclick="closeRejectModal()" aria-label="Close">×</button>
     </div>
 
-    <div class="modal-body">
+    <div class="modal-body" style="margin-top:12px;">
       <form id="rejectForm" onsubmit="return false;">
         <div class="form-row">
           <label for="reject_reason">Alasan reject <small class="text-muted">(wajib diisi)</small></label>
-          <textarea id="reject_reason" name="reason" class="form-textarea" rows="6" required></textarea>
+          <textarea id="reject_reason" name="reason" class="form-textarea" rows="6" required style="width:100%;padding:8px;border:1px solid #d1d5db;border-radius:4px;"></textarea>
         </div>
         <input type="hidden" id="reject_version_id" name="version_id" value="">
       </form>
     </div>
 
-    <div class="modal-footer" style="display:flex;justify-content:flex-end;gap:8px">
+    <div class="modal-footer" style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px">
       <button class="btn btn-muted" type="button" onclick="closeRejectModal()">Batal</button>
       <button id="rejectSubmitBtn" class="btn btn-danger" type="button">Submit Reject</button>
     </div>
@@ -166,9 +187,6 @@
   const baseApprovalUrl = "{{ rtrim(url('/approval'), '/') }}"; // e.g. /approval
   const csrfToken = "{{ csrf_token() }}";
 
-  // track opened versions
-  const opened = new Set();
-
   // helpers
   const enableRowActions = (tr) => {
     if (!tr) return;
@@ -178,43 +196,39 @@
     });
   };
 
-  // MARK: Open handling - when user clicks Open link, mark opened and enable buttons
+  // When "Open" is clicked (opens in new tab), enable approve/reject buttons for that row immediately.
   document.querySelectorAll('.action-open').forEach(link => {
     link.addEventListener('click', function () {
       const tr = this.closest('tr');
-      const vid = tr?.dataset?.versionId;
-      if (!vid) return;
-      opened.add(String(vid));
-      // small delay to allow browser to open new tab
+      if (!tr) return;
+      // small delay to avoid race with tab opening
       setTimeout(() => enableRowActions(tr), 250);
     });
   });
 
-  // Approve: block if not opened
+  // Approve: submit form normally. For extra safety, prevent if buttons still disabled
   document.querySelectorAll('.action-form-approve').forEach(form => {
     form.addEventListener('submit', function (e) {
-      const tr = this.closest('tr');
-      const vid = tr?.dataset?.versionId;
-      if (!vid || !opened.has(String(vid))) {
+      const btn = this.querySelector('.btn-approve');
+      if (btn && btn.disabled) {
         e.preventDefault();
-        alert('Silakan buka dokumen (Open) terlebih dahulu sebelum menyetujui.');
+        alert('Anda tidak boleh menyetujui sebelum MR membuka dokumen (Viewed).');
         return false;
       }
-      // otherwise allow submit (normal POST form)
+      // allow normal POST
     });
   });
 
-  // Reject: open modal only if opened
+  // Reject: open modal only if button enabled
   document.querySelectorAll('.btn-reject').forEach(btn => {
     btn.addEventListener('click', function () {
-      const tr = this.closest('tr');
-      const vid = tr?.dataset?.versionId;
-      const docCode = this.getAttribute('data-doc-code') || '';
-      if (!vid || !opened.has(String(vid))) {
-        alert('Silakan buka dokumen (Open) terlebih dahulu sebelum menolak.');
+      if (this.disabled) {
+        alert('Anda tidak boleh menolak sebelum MR membuka dokumen (Viewed).');
         return;
       }
-      document.getElementById('reject_version_id').value = vid;
+      const vid = this.getAttribute('data-version-id');
+      const docCode = this.getAttribute('data-doc-code') || '';
+      document.getElementById('reject_version_id').value = vid || '';
       document.getElementById('rejectDocCode').textContent = docCode ? `(${docCode})` : '';
       document.getElementById('reject_reason').value = '';
       showRejectModal();
@@ -227,7 +241,6 @@
     if (!el) return;
     el.style.display = 'flex';
     el.setAttribute('aria-hidden', 'false');
-    // focus textarea after modal shown
     setTimeout(() => document.getElementById('reject_reason').focus(), 50);
   };
   window.closeRejectModal = function () {
@@ -237,7 +250,7 @@
     el.setAttribute('aria-hidden', 'true');
   };
 
-  // Submit reject via fetch
+  // Submit reject via fetch to approval.reject
   const rejectBtn = document.getElementById('rejectSubmitBtn');
   if (rejectBtn) {
     rejectBtn.addEventListener('click', function () {
@@ -262,7 +275,8 @@
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'application/json',
-          'X-CSRF-TOKEN': csrfToken
+          'X-CSRF-TOKEN': csrfToken,
+          'X-Requested-With': 'XMLHttpRequest'
         },
         body: JSON.stringify({ notes: reason })
       })
@@ -299,42 +313,13 @@
     });
   }
 
-  // Compare selected: require >=2 from same document
-  const compareBtn = document.getElementById('compareSelectedBtn');
-  if (compareBtn) {
-    compareBtn.addEventListener('click', () => {
-      const checked = Array.from(document.querySelectorAll('.select-version:checked'));
-      if (checked.length < 2) {
-        alert('Pilih minimal 2 versi dari dokumen yang sama untuk membandingkan.');
-        return;
-      }
-
-      const docs = checked.map(c => c.dataset.doc);
-      const firstDoc = docs[0];
-      const allSame = docs.every(d => d === firstDoc);
-      if (!allSame) {
-        alert('Silakan pilih versi yang berasal dari DOKUMEN yang SAMA untuk membandingkan.');
-        return;
-      }
-
-      const versionIds = checked.map(c => c.value);
-      // build url: /documents/{docId}/compare?versions[]=7&versions[]=8
-      const docId = firstDoc;
-      const base = "{{ rtrim(url('/documents'), '/') }}";
-      const url = new URL(`${base}/${encodeURIComponent(docId)}/compare`, window.location.origin);
-      versionIds.forEach(id => url.searchParams.append('versions[]', id));
-      window.open(url.toString(), '_blank', 'noopener');
-    });
-  }
-
-  // Escape key closes modal
+  // Close modal on Escape
   document.addEventListener('keydown', function (e) {
     if (e.key === 'Escape') {
       const modal = document.getElementById('rejectModal');
       if (modal && modal.style.display === 'flex') closeRejectModal();
     }
   });
-
 })();
 </script>
 @endsection

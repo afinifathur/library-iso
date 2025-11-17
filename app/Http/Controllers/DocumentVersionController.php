@@ -7,10 +7,10 @@ use App\Models\DocumentVersion;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Str;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 
 class DocumentVersionController extends Controller
 {
@@ -272,6 +272,39 @@ class DocumentVersionController extends Controller
         });
 
         return back()->with('success', 'Dokumen telah dikirim ke ' . $nextStage . ' untuk persetujuan.');
+    }
+
+    /**
+     * Mark version as viewed by MR (AJAX POST from version detail page).
+     *
+     * Route: POST /versions/{version}/mark-viewed
+     */
+    public function markViewed(Request $request, DocumentVersion $version)
+    {
+        $user = $request->user();
+
+        if (! $user) {
+            return response()->json(['error' => 'Unauthorized'], 401);
+        }
+
+        // Pastikan kolom ada agar tidak error jika belum dimigrasi
+        if (! Schema::hasColumn('document_versions', 'mr_viewed_at')) {
+            return response()->json(['error' => 'Feature not available'], 400);
+        }
+
+        // Only MR (or admin/director) should mark viewed — gunakan helper userHasAnyRole
+        if (! $this->userHasAnyRole($user, ['mr', 'admin', 'director'])) {
+            return response()->json(['error' => 'Forbidden'], 403);
+        }
+
+        // Simpan timestamp (idempotent)
+        $version->mr_viewed_at = Carbon::now();
+        $version->save();
+
+        return response()->json([
+            'ok' => true,
+            'mr_viewed_at' => $version->mr_viewed_at ? $version->mr_viewed_at->toDateTimeString() : null,
+        ]);
     }
 
     /* ----------------------

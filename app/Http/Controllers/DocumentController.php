@@ -319,7 +319,16 @@ class DocumentController extends Controller
 
         $selectedVersions = $versions;
 
-        return view('documents.compare', compact('doc', 'ver1', 'ver2', 'diff', 'selectedVersions'));
+       return view('documents.compare', [
+    'doc' => $doc,
+    'ver1' => $ver1,
+    'ver2' => $ver2,
+    'diff' => $diff,
+    'selectedVersions' => $selectedVersions,
+    'versions' => $doc->versions()->orderByDesc('id')->get(), // tambahan
+    'v1' => $ver1,  // tambahan
+    'v2' => $ver2   // tambahan
+]);
     }
 
     /**
@@ -343,87 +352,128 @@ class DocumentController extends Controller
      * Approve a version (MR/Director).
      * MR moves to DIR (pending), Director approves to current.
      */
-    public function approveVersion(Request $request, DocumentVersion $version)
-    {
-        $user = $request->user();
-        if (! $user) abort(403);
+   // File: app/Http/Controllers/DocumentController.php
+public function approveVersion(Request $request, DocumentVersion $version)
+{
+    $user = $request->user();
+    if (! $user) abort(403);
 
-        // MR action: forward to Director
-        if (method_exists($user, 'hasAnyRole') && $user->hasAnyRole(['mr'])) {
-            $version->update([
-                'status' => 'submitted', // keep 'submitted' as in-progress to director
-                'approval_stage' => 'DIR',
-                'submitted_by' => $user->id,
-                'submitted_at' => now(),
-            ]);
-
-            return back()->with('success', 'Version forwarded to Director.');
-        }
-
-        // Director action: final approve -> becomes current_version
-        if (method_exists($user, 'hasAnyRole') && $user->hasAnyRole(['director','admin'])) {
-            DB::transaction(function() use ($version, $user) {
-                // mark version approved
-                $version->update([
-                    'status' => 'approved',
-                    'approval_stage' => 'DONE',
-                    'approved_by' => $user->id,
-                    'approved_at' => now(),
-                ]);
-
-                // update document current version fields
-                $doc = $version->document;
-                $doc->update([
-                    'current_version_id' => $version->id,
-                    'revision_number' => $this->incRevision($doc->revision_number),
-                    'revision_date' => now(),
-                    'approved_by' => $user->id,
-                    'approved_at' => now(),
-                ]);
-            });
-
-            return back()->with('success','Version approved and promoted to current.');
-        }
-
-        return back()->with('error','You are not authorized to approve.');
-    }
-
-    /**
-     * Reject a version (MR/Director) — stores reason and returns to draft/Kabag.
-     */
-    public function rejectVersion(Request $request, DocumentVersion $version)
-    {
-        $request->validate(['rejected_reason'=>'required|string|max:2000']);
-        $user = $request->user();
-        if (! $user) abort(403);
-
-        if (method_exists($user, 'hasAnyRole') && ! $user->hasAnyRole(['mr','director','admin'])) {
-            abort(403);
-        }
-
-        // return to kabag (draft) with reason
+    // MR: forward to Director
+    if (method_exists($user, 'hasAnyRole') && $user->hasAnyRole(['mr'])) {
         $version->update([
-            'status' => 'rejected',
-            'approval_stage' => 'KABAG',
-            'rejected_by' => $user->id,
-            'rejected_at' => now(),
-            'rejected_reason' => $request->input('rejected_reason'),
+            'status' => 'submitted',         // in queue for director
+            'approval_stage' => 'DIR',
+            'submitted_by' => $user->id,
+            'submitted_at' => now(),
         ]);
 
         // optional audit
         if (class_exists(\App\Models\AuditLog::class)) {
             \App\Models\AuditLog::create([
-                'event' => 'reject_version',
+                'event' => 'forward_to_director',
                 'user_id' => $user->id,
                 'document_id' => $version->document_id,
                 'document_version_id' => $version->id,
-                'detail' => json_encode(['reason' => $request->input('rejected_reason')]),
+                'detail' => json_encode(['note'=>'Forwarded by MR']),
                 'ip' => $request->ip(),
             ]);
         }
 
-        return back()->with('success','Version rejected and returned to draft.');
+        return redirect()->back()->with('success','Version forwarded to Director.');
     }
+
+    // Director: final approve -> becomes current_version
+    if (method_exists($user, 'hasAnyRole') && $user->hasAnyRole(['director','admin'])) {
+        DB::transaction(function() use ($version, $user) {
+            // mark version approved
+            $version->update([
+                'status' => 'approved',
+                'approval_stage' => 'DONE',
+                'approved_by' => $user->id,
+                'approved_at' => now(),
+            ]);
+
+            // update document current version fields
+            $doc = $version->document;
+            $doc->update([
+                'current_version_id' => $version->id,
+                'revision_number' => is_numeric($doc->revision_number) ? ((int)$doc->revision_number + 1) : 1,
+                'revision_date' => now(),
+                'approved_by' => $user->id,
+                'approved_at' => now(),
+            ]);
+
+            // optional audit
+            if (class_exists(\App\Models\AuditLog::class)) {
+                \App\Models\AuditLog::create([
+                    'event' => 'approve_version_by_director',
+                    'user_id' => $user->id,
+                    'document_id' => $doc->id,
+                    'document_version_id' => $version->id,
+                    'detail' => json_encode(['note'=>'Approved by Director']),
+                    'ip' => request()->ip(),
+                ]);
+            }
+        });
+
+        return redirect()->back()->with('success','Version approved and promoted to current.');
+    }
+
+    return redirect()->back()->with('error','You are not authorized to approve.');
+}
+
+
+    /**
+     * Reject a version (MR/Director) — stores reason and returns to draft/Kabag.
+     */
+    public function rejectVersion(Request $request, DocumentVersion $version)
+{
+    // validate either rejected_reason (form) or reject_note (older)
+    $data = $request->validate([
+        'rejected_reason' => 'required|string|max:2000',
+    ]);
+
+    $user = $request->user();
+    if (! $user) {
+        if ($request->wantsJson()) {
+            return response()->json(['error'=>'Unauthorized'], 401);
+        }
+        abort(403);
+    }
+
+    if (method_exists($user, 'hasAnyRole') && ! $user->hasAnyRole(['mr','director','admin'])) {
+        if ($request->wantsJson()) {
+            return response()->json(['error'=>'Forbidden'], 403);
+        }
+        abort(403);
+    }
+
+    $version->update([
+        'status' => 'rejected',
+        'approval_stage' => 'KABAG',
+        'rejected_by' => $user->id,
+        'rejected_at' => now(),
+        'rejected_reason' => $data['rejected_reason'],
+    ]);
+
+    if (class_exists(\App\Models\AuditLog::class)) {
+        \App\Models\AuditLog::create([
+            'event' => 'reject_version',
+            'user_id' => $user->id,
+            'document_id' => $version->document_id,
+            'document_version_id' => $version->id,
+            'detail' => json_encode(['reason'=>$data['rejected_reason']]),
+            'ip' => $request->ip(),
+        ]);
+    }
+
+    if ($request->wantsJson() || $request->isJson()) {
+        return response()->json(['ok'=>true]);
+    }
+
+    return redirect()->back()->with('success','Version rejected and returned to draft.');
+}
+
 
     /**
      * Detail dokumen + latest version + semua versi.
@@ -600,42 +650,64 @@ class DocumentController extends Controller
      * BUAT DOKUMEN BARU + BASELINE V1 APPROVED.
      * (Admin-only baseline uploader)
      */
-    public function store(Request $request)
-    {
-        $user = $request->user();
+  /**
+ * Create document OR create draft version for existing doc_code.
+ *
+ * Behaviour:
+ * - If doc_code exists -> create/overwrite draft version (status=draft, approval_stage=KABAG)
+ * - If doc_code not exists -> create Document record and create a draft version (not auto-approved)
+ */
+public function store(Request $request)
+{
+    $user = $request->user();
 
-        $data = $request->validate([
-            'doc_code'       => 'required|string|max:120|unique:documents,doc_code',
-            'title'          => 'required|string|max:255',
-            'category_id'    => 'required|integer|exists:categories,id',
-            'department_id'  => 'required|integer|exists:departments,id',
-            'file'           => 'nullable|file|mimes:pdf,doc,docx|max:51200',
-            'pasted_text'    => 'nullable|string',
-            'version_label'  => 'nullable|string|max:50',
-            'change_note'    => 'nullable|string|max:2000',
-        ]);
+    // Validate without unique rule on doc_code (we handle existence manually)
+    $data = $request->validate([
+        'doc_code'       => 'nullable|string|max:120',
+        'title'          => 'required|string|max:255',
+        'category_id'    => 'nullable|integer|exists:categories,id',
+        'department_id'  => 'required|integer|exists:departments,id',
+        'file'           => 'nullable|file|mimes:pdf,doc,docx|max:51200',
+        'pasted_text'    => 'nullable|string',
+        'version_label'  => 'nullable|string|max:50',
+        'change_note'    => 'nullable|string|max:2000',
+    ]);
 
-        $document = Document::create([
-            'doc_code'      => $data['doc_code'],
-            'title'         => $data['title'],
-            'department_id' => $data['department_id'],
-            'category_id'   => $data['category_id'],
-        ]);
+    $disk = Storage::disk('documents');
 
-        $disk = Storage::disk('documents');
+    // normalize doc_code if provided
+    $docCode = !empty($data['doc_code']) ? strtoupper(trim($data['doc_code'])) : null;
 
-        $file_path = null;
-        $file_mime = null;
-        $checksum  = null;
+    // If doc_code exists: create draft version for that document (or update existing draft of same uploader)
+    if ($docCode && $existing = Document::where('doc_code', $docCode)->first()) {
 
+        $document = $existing;
+
+        // Block if there is already a submitted/pending version for this document
+        $hasPending = DocumentVersion::where('document_id', $document->id)
+            ->whereIn('status', ['submitted','pending'])
+            ->exists();
+
+        if ($hasPending) {
+            return redirect()->route('documents.show', $document->id)
+                ->with('error', 'Gagal menyimpan: sudah ada pengajuan versi untuk dokumen ini di antrian. Hubungi MR untuk pembatalan atau tunggu proses selesai.');
+        }
+
+        // remove previous draft(s) by same uploader for same document (overwrite behaviour)
+        DocumentVersion::where('document_id', $document->id)
+            ->where('created_by', $user->id)
+            ->whereIn('status', ['draft','rejected'])
+            ->delete();
+
+        // prepare file save
+        $file_path = null; $file_mime = null; $checksum = null;
         if ($request->hasFile('file')) {
             $file     = $request->file('file');
             $safeName = $this->safeFilename($file->getClientOriginalName());
-            $filename = time().'_'.$safeName;
-            $folder   = $document->doc_code.'/v1';
+            $filename = time().'_'.Str::random(6).'_'.$safeName;
+            $folder   = ($document->doc_code ?: 'MISC').'/'.($data['version_label'] ?? 'v1');
             $file_path = $folder.'/'.$filename;
-
-            $content   = file_get_contents($file->getRealPath());
+            $content = file_get_contents($file->getRealPath());
             $disk->put($file_path, $content);
             $file_mime = $file->getClientMimeType() ?: 'application/octet-stream';
             $checksum  = hash('sha256', $content);
@@ -644,28 +716,69 @@ class DocumentController extends Controller
         $version = DocumentVersion::create([
             'document_id'   => $document->id,
             'version_label' => $data['version_label'] ?? 'v1',
-            'status'        => 'approved',
-            'approval_stage'=> 'DONE',
+            'status'        => 'draft',
+            'approval_stage'=> 'KABAG',
+            'created_by'    => $user->id,
             'file_path'     => $file_path,
             'file_mime'     => $file_mime,
             'checksum'      => $checksum,
             'change_note'   => $data['change_note'] ?? null,
-            'plain_text'    => $request->input('pasted_text') ?? null,
-            'created_by'    => $user->id ?? null,
-            'approved_by'   => $user->id ?? null,
-            'approved_at'   => now(),
+            'plain_text'    => $data['pasted_text'] ?? null,
         ]);
 
-        $document->update([
-            'current_version_id' => $version->id,
-            'revision_number'    => 1,
-            'revision_date'      => now(),
-        ]);
-
-        return redirect()
-            ->route('documents.show', $document->id)
-            ->with('success','Baseline uploaded.');
+        return redirect()->route('documents.show', $document->id)
+            ->with('success', 'Draft berhasil disimpan — pengajuan berada di draft container. Silakan submit untuk dikirim ke MR.');
     }
+
+    // ELSE: doc_code not provided or not exists -> create new Document (in draft state)
+    // create a new doc_code if not provided
+    if (empty($docCode)) {
+        // generate fallback doc_code; you may replace with your generator
+        $prefix = strtoupper(Str::slug($data['category_id'] ? (string)$data['category_id'] : 'MISC', '-'));
+        $dept = Department::find($data['department_id']);
+        $deptCode = $dept?->code ?? 'MISC';
+        $docCode = $prefix . '.' . $deptCode . '.' . str_pad((string)random_int(1,999), 3, '0', STR_PAD_LEFT);
+    }
+
+    // create document record
+    $document = Document::create([
+        'doc_code'      => $docCode,
+        'title'         => $data['title'],
+        'department_id' => (int) $data['department_id'],
+        'category_id'   => $data['category_id'] ?? null,
+    ]);
+
+    // save file if provided
+    $file_path = null; $file_mime = null; $checksum = null;
+    if ($request->hasFile('file')) {
+        $file     = $request->file('file');
+        $safeName = $this->safeFilename($file->getClientOriginalName());
+        $filename = time().'_'.Str::random(6).'_'.$safeName;
+        $folder   = $document->doc_code.'/'.($data['version_label'] ?? 'v1');
+        $file_path = $folder.'/'.$filename;
+        $content = file_get_contents($file->getRealPath());
+        $disk->put($file_path, $content);
+        $file_mime = $file->getClientMimeType() ?: 'application/octet-stream';
+        $checksum  = hash('sha256', $content);
+    }
+
+    $version = DocumentVersion::create([
+        'document_id'   => $document->id,
+        'version_label' => $data['version_label'] ?? 'v1',
+        'status'        => 'draft',
+        'approval_stage'=> 'KABAG',
+        'created_by'    => $user->id,
+        'file_path'     => $file_path,
+        'file_mime'     => $file_mime,
+        'checksum'      => $checksum,
+        'change_note'   => $data['change_note'] ?? null,
+        'plain_text'    => $data['pasted_text'] ?? null,
+    ]);
+
+    return redirect()->route('documents.show', $document->id)
+        ->with('success', 'Dokumen baru dibuat dan disimpan ke draft container. Silakan submit untuk mengajukan ke MR.');
+}
+
 
     /* =========================
      * Helpers & utilities
