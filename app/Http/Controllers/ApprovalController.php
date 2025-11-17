@@ -1,198 +1,172 @@
 <?php
+// File: app/Http/Controllers/ApprovalController.php
 
 namespace App\Http\Controllers;
 
-use App\Models\Document;
 use App\Models\DocumentVersion;
 use Illuminate\Http\Request;
-use Illuminate\Http\RedirectResponse;
 use Illuminate\View\View;
 use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
-use Illuminate\Support\Facades\Log;
 use Symfony\Component\HttpFoundation\Response;
 
 class ApprovalController extends Controller
 {
     /**
-     * Tampilkan daftar versi yang menunggu approval.
+     * Show approval queue according to current user's role.
+     *
+     * - MR sees approval_stage = 'MR' && status in ['submitted','pending','draft']
+     * - Director sees approval_stage = 'DIR' && status = 'to_dir'
+     * - Admin sees broad pending set (optional)
+     *
+     * Returns view 'approval.index' with a paginated $rows variable.
      */
     public function index(Request $request): View
     {
         $user = $request->user() ?? Auth::user();
 
-        // Mapping role -> canonical stage(s). Use arrays to accept multiple DB variants.
-        $roleToStages = [
-            'kabag'    => ['KABAG'],
-            'mr'       => ['MR'],
-            'director' => ['DIR', 'DIRECTOR'], // accept DIR or DIRECTOR in DB
-            'admin'    => null, // admin lihat semua
-        ];
+        // role checks cached locally
+        $isDirector = $this->userHasAnyRole($user, ['director']);
+        $isMr       = $this->userHasAnyRole($user, ['mr']);
+        $isKabag    = $this->userHasAnyRole($user, ['kabag']);
+        $isAdmin    = $this->userHasAnyRole($user, ['admin']);
 
-        // helper untuk pengecekan role sederhana (tolerant terhadap berbagai implementasi)
-        $hasRole = function ($user, string $roleName): bool {
-            if (! $user) return false;
+        $query = DocumentVersion::with(['document', 'creator', 'document.department']);
 
-            // spatie
-            if (method_exists($user, 'hasRole')) {
-                try {
-                    if ($user->hasRole($roleName)) return true;
-                } catch (\Throwable $e) { /* ignore */ }
-            }
-            if (method_exists($user, 'hasAnyRole')) {
-                try {
-                    if ($user->hasAnyRole([$roleName])) return true;
-                } catch (\Throwable $e) { /* ignore */ }
-            }
-
-            // relation roles()
-            if (method_exists($user, 'roles')) {
-                try {
-                    $names = $user->roles()->pluck('name')->map(fn($n) => Str::lower($n))->toArray();
-                    if (in_array(Str::lower($roleName), $names, true)) return true;
-                } catch (\Throwable $e) { /* ignore */ }
-            }
-
-            // property roles (collection/array)
-            if (isset($user->roles) && is_iterable($user->roles)) {
-                try {
-                    $names = collect($user->roles)->pluck('name')->map(fn($n) => Str::lower($n))->toArray();
-                    if (in_array(Str::lower($roleName), $names, true)) return true;
-                } catch (\Throwable $e) { /* ignore */ }
-            }
-
-            // whitelist emails
-            $whitelist = [
-                'direktur@peroniks.com',
-                'adminqc@peroniks.com',
-            ];
-            if (! empty($user->email) && in_array(Str::lower($user->email), array_map('strtolower', $whitelist), true)) {
-                // grant common roles for whitelist
-                if (in_array(Str::lower($roleName), ['admin','director','mr','kabag'], true)) return true;
-            }
-
-            return false;
-        };
-
-        // tentukan userStage (choose first matching role in $roleToStages)
-        $userStage = null;
-        foreach ($roleToStages as $role => $stages) {
-            if ($hasRole($user, $role)) {
-                // $stages === null means admin/all
-                $userStage = $stages; // array|null
-                break;
-            }
+        if ($isDirector) {
+            // Director: only items forwarded to director
+            $query->whereRaw("UPPER(TRIM(COALESCE(approval_stage, ''))) IN (?, ?)", ['DIRECTOR', 'DIR'])
+                  ->where('status', 'to_dir');
+        } elseif ($isMr) {
+            // MR: only MR-stage items
+            $query->whereRaw("UPPER(TRIM(COALESCE(approval_stage, ''))) = ?", ['MR'])
+                  ->whereIn('status', ['submitted', 'draft', 'pending']);
+        } elseif ($isKabag) {
+            $query->whereRaw("UPPER(TRIM(COALESCE(approval_stage, ''))) = ?", ['KABAG'])
+                  ->whereIn('status', ['draft', 'pending', 'submitted']);
+        } elseif ($isAdmin) {
+            // Admin: broad pending set
+            $query->whereIn('status', ['submitted', 'pending', 'in_progress', 'to_dir']);
+        } else {
+            // Other users: show own submissions
+            $query->where('created_by', $user->id)->whereIn('status', ['submitted', 'pending']);
         }
 
-        // Base query: eager load relasi yang dipakai di view
-        $query = DocumentVersion::with(['document.department', 'creator', 'document'])
-            ->whereIn('status', ['submitted', 'pending', 'in_progress']);
+        $rows = $query->orderByDesc('submitted_at')
+                      ->orderByDesc('created_at')
+                      ->paginate(15)
+                      ->appends($request->query());
 
-        // Jika user bukan admin (userStage !== null && bukan null array), filter berdasarkan stage(s)
-        if (is_array($userStage)) {
-            // UPPER(COALESCE(approval_stage,'')) in (STAGE1, STAGE2)
-            $upperStages = array_map(fn($s) => Str::upper($s), $userStage);
-            $query->whereIn(DB::raw('UPPER(COALESCE(approval_stage, \'\'))'), $upperStages);
-        } // if userStage === null => admin => no stage filter
+        $stage = $isDirector ? 'DIRECTOR' : ($isMr ? 'MR' : ($isKabag ? 'KABAG' : 'ALL'));
+        $userRoleLabel = strtoupper($stage);
 
-        $pending = $query->orderByDesc('created_at')->paginate(15);
-
-        // compatibility variables for older views
-        $pendingVersions = $pending;
-        // For display: pick a single label if available, otherwise 'ALL'
-        $stage = is_array($userStage) ? ($userStage[0] ?? null) : null;
-        $userRoleLabel = $stage ? Str::upper($stage) : 'ALL';
-
-        return view('approval.index', compact('pending', 'pendingVersions', 'stage', 'userRoleLabel'));
+        return view('approval.index', [
+            'rows' => $rows,
+            'stage' => $stage,
+            'userRoleLabel' => $userRoleLabel,
+        ]);
     }
 
     /**
-     * Approve a document version.
-     *
-     * Deprecated: kept name 'approve' for routes compatibility.
+     * MR-specific queue (non-paginated list). Useful for direct links.
+     */
+    public function mrQueue(Request $request): View
+    {
+        $this->authorizeQueueAccess('mr');
+
+        $rows = DocumentVersion::whereRaw("UPPER(TRIM(COALESCE(approval_stage, ''))) = ?", ['MR'])
+            ->whereIn('status', ['submitted', 'pending', 'draft'])
+            ->with(['document', 'creator', 'document.department'])
+            ->orderByDesc('submitted_at')
+            ->get();
+
+        return view('approval.index', [
+            'rows' => $rows,
+            'stage' => 'MR',
+            'userRoleLabel' => 'MR',
+        ]);
+    }
+
+    /**
+     * Director-specific queue (non-paginated list). Useful for direct links.
+     */
+    public function directorQueue(Request $request): View
+    {
+        $this->authorizeQueueAccess('director');
+
+        $rows = DocumentVersion::whereRaw("UPPER(TRIM(COALESCE(approval_stage, ''))) IN (?, ?)", ['DIRECTOR', 'DIR'])
+            ->where('status', 'to_dir')
+            ->with(['document', 'creator', 'document.department'])
+            ->orderByDesc('submitted_at')
+            ->get();
+
+        return view('approval.index', [
+            'rows' => $rows,
+            'stage' => 'DIRECTOR',
+            'userRoleLabel' => 'DIRECTOR',
+        ]);
+    }
+
+    /**
+     * Approve action:
+     *  - MR: forward -> set status = 'to_dir', approval_stage = 'DIR'
+     *  - Director: final approve -> set status = 'approved', approval_stage = 'DONE' and promote document
      */
     public function approve(Request $request, DocumentVersion $version)
     {
-        return $this->handleApprove($request, $version);
-    }
-
-    /**
-     * Alias for approve.
-     */
-    public function approveVersion(Request $request, DocumentVersion $version)
-    {
-        return $this->handleApprove($request, $version);
-    }
-
-    /**
-     * Internal approve handler.
-     */
-    protected function handleApprove(Request $request, DocumentVersion $version)
-    {
         $user = $request->user() ?? Auth::user();
+        if (! $user) abort(Response::HTTP_FORBIDDEN);
 
-        if (! $this->canApprove($user)) {
-            return $this->forbiddenResponse($request, 'Unauthorized');
+        // MR: forward to Director
+        if ($this->userHasAnyRole($user, ['mr'])) {
+            $currentStage = $this->normalizeStage($version->approval_stage ?? '');
+            $status = strtolower((string)($version->status ?? ''));
+
+            if ($currentStage !== 'MR' && ! in_array($status, ['submitted', 'draft', 'pending'], true)) {
+                return back()->with('error', 'Item tidak berada pada antrian MR atau sudah diproses.');
+            }
+
+            DB::transaction(function () use ($version, $user, $request) {
+                $version->update([
+                    'status' => 'to_dir',
+                    'approval_stage' => 'DIR',
+                    'submitted_by' => $user->id,
+                    'submitted_at' => now(),
+                ]);
+
+                $this->maybeInsertApprovalLog($version->id, $user->id, $this->getCurrentRoleName($user), 'forward_to_dir', $request->input('note'));
+            });
+
+            Cache::forget('dashboard.payload');
+
+            return back()->with('success', 'Version berhasil diteruskan ke Director.');
         }
 
-        if (in_array($version->status, ['approved', 'rejected'], true)) {
-            return $this->finalizedResponse($request, 'Version already finalized.');
-        }
+        // Director: final approve
+        if ($this->userHasAnyRole($user, ['director', 'admin'])) {
+            $status = strtolower((string)($version->status ?? ''));
+            $stageNorm = $this->normalizeStage($version->approval_stage ?? '');
 
-        $validated = $request->validate([
-            'note'  => 'nullable|string|max:2000',
-            'notes' => 'nullable|string|max:2000',
-        ]);
-        $note = $validated['note'] ?? $validated['notes'] ?? null;
+            if ($status !== 'to_dir' && $stageNorm !== 'DIRECTOR' && $stageNorm !== 'DIR') {
+                return back()->with('error', 'Versi belum diteruskan ke Director atau tidak siap untuk diapprove.');
+            }
 
-        $currentStageRaw = Str::upper($version->approval_stage ?? 'KABAG');
+            DB::transaction(function () use ($version, $user) {
+                $version->update([
+                    'status' => 'approved',
+                    'approval_stage' => 'DONE',
+                    'approved_by' => $user->id,
+                    'approved_at' => now(),
+                ]);
 
-        // normalize current stage: allow DIR/DIRECTOR equivalence
-        $currentStage = $this->normalizeStage($currentStageRaw);
-        $nextStage = $this->nextApprovalStage($currentStage);
-
-        if (! $this->roleMatchesStage($user, $currentStage)) {
-            return $this->forbiddenResponse($request, 'Anda tidak memiliki izin untuk tindakan ini pada tahap saat ini.');
-        }
-
-        DB::transaction(function () use ($version, $user, $note, $nextStage) {
-            $this->insertApprovalLog(
-                $version->id,
-                $user->id,
-                $this->getCurrentRoleName($user),
-                'approve',
-                $note
-            );
-
-            if ($nextStage === 'DONE') {
-                // Final approval: mark approved and update document
-                $version->status = 'approved';
-                $version->approval_stage = 'DONE';
-                if (Schema::hasColumn($version->getTable(), 'approved_by')) {
-                    $version->approved_by = $user->id;
-                }
-                if (Schema::hasColumn($version->getTable(), 'approved_at')) {
-                    $version->approved_at = now();
-                }
-
-                if (Schema::hasColumn($version->getTable(), 'approval_note')) {
-                    $version->approval_note = $note;
-                }
-                if (Schema::hasColumn($version->getTable(), 'approval_notes')) {
-                    $version->approval_notes = $note;
-                }
-
-                $version->save();
-
-                // update document current version atomically
-                $doc = $version->document()->lockForUpdate()->first();
+                $doc = $version->document;
                 if ($doc) {
-                    if (!empty($doc->current_version_id) && $doc->current_version_id != $version->id) {
+                    if (! empty($doc->current_version_id) && $doc->current_version_id != $version->id) {
                         $old = DocumentVersion::find($doc->current_version_id);
-                        if ($old && ! in_array($old->status, ['approved', 'rejected', 'superseded'], true)) {
+                        if ($old && ! in_array($old->status, ['approved','rejected','superseded'], true)) {
                             $old->status = 'superseded';
                             $old->save();
                         }
@@ -201,38 +175,39 @@ class ApprovalController extends Controller
                     if (Schema::hasColumn($doc->getTable(), 'current_version_id')) {
                         $doc->current_version_id = $version->id;
                     }
+                    if (Schema::hasColumn($doc->getTable(), 'revision_number')) {
+                        $doc->revision_number = is_numeric($doc->revision_number) ? ((int)$doc->revision_number + 1) : 1;
+                    }
                     if (Schema::hasColumn($doc->getTable(), 'revision_date')) {
-                        $doc->revision_date = $version->approved_at ?? now();
+                        $doc->revision_date = now();
+                    }
+                    if (Schema::hasColumn($doc->getTable(), 'approved_by')) {
+                        $doc->approved_by = $user->id;
+                    }
+                    if (Schema::hasColumn($doc->getTable(), 'approved_at')) {
+                        $doc->approved_at = now();
                     }
                     $doc->save();
                 }
-            } else {
-                // move to next stage (MR / DIRECTOR)
-                $version->status = 'submitted';
-                // store canonical next stage; use 'DIRECTOR' rather than 'DIR' for clarity
-                $version->approval_stage = $nextStage === 'DIRECTOR' ? 'DIRECTOR' : $nextStage;
 
-                if (Schema::hasColumn($version->getTable(), 'approval_note')) {
-                    $version->approval_note = $note;
-                }
-                if (Schema::hasColumn($version->getTable(), 'approval_notes')) {
-                    $version->approval_notes = $note;
-                }
+                $this->maybeInsertApprovalLog($version->id, $user->id, $this->getCurrentRoleName($user), 'approve_final', request()->input('note'));
+            });
 
-                $version->save();
-            }
-        });
+            Cache::forget('dashboard.payload');
 
-        // invalidate dashboard cache if used
-        Cache::forget('dashboard.payload');
-
-        if ($currentStage === 'MR' && $nextStage === 'DIRECTOR') {
-            return $this->successResponse($request, 'Dokumen diteruskan ke Direktur untuk persetujuan akhir.');
+            $docTitle = optional($version->document)->title ?? $version->document->doc_code ?? 'Dokumen';
+            return redirect()->route('approval.index')->with('success', "Berhasil diapprove: dokumen \"{$docTitle}\" menjadi versi resmi.");
         }
 
-        return $this->successResponse($request, $nextStage === 'DONE'
-            ? 'Dokumen disetujui dan versi ini kini menjadi aktif.'
-            : "Approved — next stage: {$nextStage}");
+        return back()->with('error', 'Anda tidak berwenang melakukan aksi ini.');
+    }
+
+    /**
+     * Alias kept for routes that previously called approveVersion.
+     */
+    public function approveVersion(Request $request, DocumentVersion $version)
+    {
+        return $this->approve($request, $version);
     }
 
     /**
@@ -240,60 +215,26 @@ class ApprovalController extends Controller
      */
     public function reject(Request $request, DocumentVersion $version)
     {
-        return $this->handleReject($request, $version);
-    }
-
-    /**
-     * Alias for reject.
-     */
-    public function rejectVersion(Request $request, DocumentVersion $version)
-    {
-        return $this->handleReject($request, $version);
-    }
-
-    /**
-     * Internal reject handler.
-     */
-    protected function handleReject(Request $request, DocumentVersion $version)
-    {
-        $data = $request->validate([
-            'notes'  => 'nullable|string|max:2000',
-            'reason' => 'nullable|string|max:2000',
-            'note'   => 'nullable|string|max:2000',
-        ]);
-        $messageNote = $data['notes'] ?? $data['reason'] ?? $data['note'] ?? null;
+        // accept multiple possible input keys, normalize at top
+        $note = $request->input('rejected_reason') ?? $request->input('notes') ?? $request->input('reason') ?? $request->input('note') ?? null;
+        if ($note === null) {
+            // validate presence if not provided
+            $request->validate([
+                'rejected_reason' => 'required|string|max:2000',
+            ]);
+            $note = $request->input('rejected_reason');
+        }
 
         $user = $request->user() ?? Auth::user();
+        if (! $user) abort(Response::HTTP_FORBIDDEN);
 
-        if (in_array($version->status, ['approved', 'rejected'], true)) {
-            return $this->finalizedResponse($request, 'Version already finalized.');
+        if (! $this->userHasAnyRole($user, ['mr', 'director', 'admin', 'kabag'])) {
+            return back()->with('error', 'Anda tidak berwenang mereject versi ini.');
         }
 
-        $currentStage = $this->normalizeStage(Str::upper($version->approval_stage ?? 'KABAG'));
-
-        if (! $this->roleMatchesStage($user, $currentStage)) {
-            return $this->forbiddenResponse($request, 'Unauthorized for this stage.');
-        }
-
-        DB::transaction(function () use ($version, $user, $messageNote) {
-            $this->insertApprovalLog(
-                $version->id,
-                $user->id,
-                $this->getCurrentRoleName($user),
-                'reject',
-                $messageNote
-            );
-
+        DB::transaction(function () use ($version, $user, $note) {
             $version->status = 'rejected';
-            // returned to KABAG for revision
             $version->approval_stage = 'KABAG';
-
-            if (Schema::hasColumn($version->getTable(), 'approval_notes')) {
-                $version->approval_notes = $messageNote;
-            }
-            if (Schema::hasColumn($version->getTable(), 'approval_note')) {
-                $version->approval_note = $messageNote;
-            }
 
             if (Schema::hasColumn($version->getTable(), 'rejected_by')) {
                 $version->rejected_by = $user->id;
@@ -301,8 +242,16 @@ class ApprovalController extends Controller
             if (Schema::hasColumn($version->getTable(), 'rejected_at')) {
                 $version->rejected_at = now();
             }
+            if (Schema::hasColumn($version->getTable(), 'approval_notes')) {
+                $version->approval_notes = $note;
+            }
+            if (Schema::hasColumn($version->getTable(), 'approval_note')) {
+                $version->approval_note = $note;
+            }
 
             $version->save();
+
+            $this->maybeInsertApprovalLog($version->id, $user->id, $this->getCurrentRoleName($user), 'reject', $note);
         });
 
         Cache::forget('dashboard.payload');
@@ -311,7 +260,21 @@ class ApprovalController extends Controller
             return response()->json(['success' => true, 'message' => 'Version rejected and returned to Kabag.']);
         }
 
-        return redirect()->route('approval.index')->with('success', 'Dokumen direject dan dikembalikan ke Kabag.');
+        return redirect()->route('approval.index')->with('success', 'Version direject dan dikembalikan ke Kabag/draft.');
+    }
+
+    /**
+     * Alias for reject (keeps compatibility with older route names).
+     */
+    public function rejectVersion(Request $request, DocumentVersion $version)
+    {
+        // normalize payload names used across different callers
+        $note = $request->input('rejected_reason') ?? $request->input('notes') ?? $request->input('reason') ?? $request->input('note') ?? null;
+        if ($note !== null) {
+            $request->merge(['rejected_reason' => $note]);
+        }
+
+        return $this->reject($request, $version);
     }
 
     /* ----------------------
@@ -319,32 +282,59 @@ class ApprovalController extends Controller
        ---------------------- */
 
     /**
-     * Cek apakah user punya permission approve (spatie or whitelist)
+     * Simple authorization helper for queue endpoints.
      */
-    protected function canApprove($user): bool
+    protected function authorizeQueueAccess(string $role): void
     {
-        if (! $user) return false;
-
-        if (method_exists($user, 'hasAnyRole')) {
-            try {
-                return $user->hasAnyRole(['mr', 'director', 'admin', 'kabag']);
-            } catch (\Throwable $e) {
-                // fallback to whitelist
-            }
+        $user = auth()->user();
+        if (! $user || ! $this->userHasAnyRole($user, [$role]) ) {
+            abort(Response::HTTP_FORBIDDEN, 'Access denied.');
         }
-
-        // fallback whitelist
-        return in_array(Str::lower($user->email ?? ''), [
-            'direktur@peroniks.com',
-            'adminqc@peroniks.com',
-        ], true);
     }
 
     /**
-     * Normalize stage token to canonical set we use internally.
-     * Accepts variants like 'DIR' / 'DIRECTOR' -> returns 'DIRECTOR',
-     * 'KABAG' -> 'KABAG', 'MR' -> 'MR', 'DONE' -> 'DONE'.
+     * Safe role check helper: supports spatie hasAnyRole, roles() relation, roles attribute, or email whitelist.
      */
+    protected function userHasAnyRole($user, array $roles): bool
+    {
+        if (! $user) return false;
+
+        // spatie hasAnyRole
+        if (method_exists($user, 'hasAnyRole')) {
+            try {
+                return $user->hasAnyRole($roles);
+            } catch (\Throwable $e) { /* fallback */ }
+        }
+
+        // relation roles()
+        if (method_exists($user, 'roles')) {
+            try {
+                $names = $user->roles()->pluck('name')->map(fn($n) => Str::lower($n))->toArray();
+                foreach ($roles as $r) {
+                    if (in_array(Str::lower($r), $names, true)) return true;
+                }
+            } catch (\Throwable $e) { /* fallback */ }
+        }
+
+        // roles attribute (array/collection)
+        if (isset($user->roles) && is_iterable($user->roles)) {
+            try {
+                $names = collect($user->roles)->pluck('name')->map(fn($n) => Str::lower($n))->toArray();
+                foreach ($roles as $r) {
+                    if (in_array(Str::lower($r), $names, true)) return true;
+                }
+            } catch (\Throwable $e) { /* fallback */ }
+        }
+
+        // email whitelist fallback
+        $whitelist = ['direktur@peroniks.com', 'adminqc@peroniks.com'];
+        if (! empty($user->email) && in_array(Str::lower($user->email), $whitelist, true)) {
+            return true;
+        }
+
+        return false;
+    }
+
     protected function normalizeStage(string $stage): string
     {
         $s = Str::upper(trim($stage));
@@ -355,85 +345,11 @@ class ApprovalController extends Controller
         return $s;
     }
 
-    /**
-     * Apakah role user cocok dengan sebuah stage
-     */
-    protected function roleMatchesStage($user, string $stage): bool
-    {
-        $s = $this->normalizeStage($stage);
-
-        return match ($s) {
-            'KABAG'    => $this->userHasAnyRole($user, ['kabag', 'admin']),
-            'MR'       => $this->userHasAnyRole($user, ['mr', 'admin']),
-            'DIRECTOR' => $this->userHasAnyRole($user, ['director', 'admin']),
-            'DONE'     => false,
-            default    => false,
-        };
-    }
-
-    /**
-     * Cek beberapa cara untuk mengetahui role user
-     */
-    protected function userHasAnyRole($user, array $roles): bool
-    {
-        if (! $user) return false;
-
-        if (method_exists($user, 'hasAnyRole')) {
-            try {
-                return $user->hasAnyRole($roles);
-            } catch (\Throwable $e) {
-                // fallback
-            }
-        }
-
-        if (method_exists($user, 'roles')) {
-            try {
-                $names = $user->roles()->pluck('name')->map(fn($n) => Str::lower($n))->toArray();
-                foreach ($roles as $r) {
-                    if (in_array(Str::lower($r), $names, true)) return true;
-                }
-            } catch (\Throwable $e) { /* fallback */ }
-        }
-
-        if (isset($user->roles) && is_iterable($user->roles)) {
-            $names = collect($user->roles)->pluck('name')->map(fn($n) => Str::lower($n))->toArray();
-            foreach ($roles as $r) {
-                if (in_array(Str::lower($r), $names, true)) return true;
-            }
-        }
-
-        // whitelist
-        $whitelist = ['direktur@peroniks.com', 'adminqc@peroniks.com'];
-        if (! empty($user->email) && in_array(Str::lower($user->email), $whitelist, true)) {
-            return true;
-        }
-
-        return false;
-    }
-
-    /**
-     * Next approval stage after current (canonical values).
-     */
-    protected function nextApprovalStage(string $current): string
-    {
-        $c = $this->normalizeStage($current);
-
-        return match ($c) {
-            'KABAG'    => 'MR',
-            'MR'       => 'DIRECTOR',
-            'DIRECTOR' => 'DONE',
-            default    => 'KABAG',
-        };
-    }
-
-    /**
-     * Ambil nama role/label saat ini (untuk logging). Berupa string.
-     */
     protected function getCurrentRoleName($user): string
     {
         if ($user && method_exists($user, 'getRoleNames')) {
             try {
-                $names = $user->getRoleNames(); // spatie Collection
+                $names = $user->getRoleNames();
                 return $names->first() ?? 'unknown';
             } catch (\Throwable $e) { /* ignore */ }
         }
@@ -449,9 +365,9 @@ class ApprovalController extends Controller
     }
 
     /**
-     * Insert row ke approval_logs jika tabel tersedia.
+     * Insert a row to approval_logs if table exists (safe helper).
      */
-    protected function insertApprovalLog(int $versionId, int $userId, string $role, string $action, ?string $note = null): void
+    protected function maybeInsertApprovalLog(int $versionId, int $userId, string $role, string $action, ?string $note = null): void
     {
         if (! Schema::hasTable('approval_logs')) {
             return;
@@ -469,7 +385,7 @@ class ApprovalController extends Controller
     }
 
     /* -----------------------
-       Response helper
+       Response helpers
        ----------------------- */
 
     protected function forbiddenResponse(Request $request, string $message = 'Forbidden')
@@ -478,21 +394,5 @@ class ApprovalController extends Controller
             return response()->json(['success' => false, 'message' => $message], Response::HTTP_FORBIDDEN);
         }
         abort(Response::HTTP_FORBIDDEN, $message);
-    }
-
-    protected function finalizedResponse(Request $request, string $message = 'Already finalized')
-    {
-        if ($request->expectsJson()) {
-            return response()->json(['success' => false, 'message' => $message], Response::HTTP_BAD_REQUEST);
-        }
-        return back()->with('warning', $message);
-    }
-
-    protected function successResponse(Request $request, string $message = 'OK')
-    {
-        if ($request->expectsJson()) {
-            return response()->json(['success' => true, 'message' => $message]);
-        }
-        return back()->with('success', $message);
     }
 }

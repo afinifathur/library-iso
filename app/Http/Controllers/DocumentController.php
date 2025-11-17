@@ -353,38 +353,52 @@ class DocumentController extends Controller
      * MR moves to DIR (pending), Director approves to current.
      */
    // File: app/Http/Controllers/DocumentController.php
+/**
+ * Approve a version (MR -> forward to Director, Director -> final approve).
+ */
 public function approveVersion(Request $request, DocumentVersion $version)
 {
     $user = $request->user();
     if (! $user) abort(403);
 
-    // MR: forward to Director
+    // MR action: mark as forwarded to director (only MR)
     if (method_exists($user, 'hasAnyRole') && $user->hasAnyRole(['mr'])) {
+        // Only allow forwarding if current stage is MR and status is submitted (from kabag)
+        if (! in_array(strtoupper($version->approval_stage ?? ''), ['MR']) && ! in_array(strtolower($version->status ?? ''), ['submitted','draft'])) {
+            return back()->with('error', 'Version tidak dalam stage MR atau sudah diproses.');
+        }
+
         $version->update([
-            'status' => 'submitted',         // in queue for director
+            'status'         => 'to_dir',        // new intermediate status
             'approval_stage' => 'DIR',
-            'submitted_by' => $user->id,
-            'submitted_at' => now(),
+            'submitted_by'   => $user->id,
+            'submitted_at'   => now(),
         ]);
 
         // optional audit
         if (class_exists(\App\Models\AuditLog::class)) {
             \App\Models\AuditLog::create([
-                'event' => 'forward_to_director',
+                'event' => 'mr_forward_to_dir',
                 'user_id' => $user->id,
                 'document_id' => $version->document_id,
                 'document_version_id' => $version->id,
-                'detail' => json_encode(['note'=>'Forwarded by MR']),
+                'detail' => json_encode(['note'=>'forwarded to director']),
                 'ip' => $request->ip(),
             ]);
         }
 
-        return redirect()->back()->with('success','Version forwarded to Director.');
+        return back()->with('success', 'Version forwarded to Director (ready for final approval).');
     }
 
-    // Director: final approve -> becomes current_version
+    // Director (final approve)
     if (method_exists($user, 'hasAnyRole') && $user->hasAnyRole(['director','admin'])) {
-        DB::transaction(function() use ($version, $user) {
+
+        // only allow director to approve versions that MR already forwarded (status = to_dir)
+        if (strtolower($version->status) !== 'to_dir') {
+            return back()->with('error', 'Tidak dapat approve: versi ini belum difinalisasi oleh MR.');
+        }
+
+        DB::transaction(function() use ($version, $user, $request) {
             // mark version approved
             $version->update([
                 'status' => 'approved',
@@ -395,32 +409,34 @@ public function approveVersion(Request $request, DocumentVersion $version)
 
             // update document current version fields
             $doc = $version->document;
-            $doc->update([
-                'current_version_id' => $version->id,
-                'revision_number' => is_numeric($doc->revision_number) ? ((int)$doc->revision_number + 1) : 1,
-                'revision_date' => now(),
-                'approved_by' => $user->id,
-                'approved_at' => now(),
-            ]);
+            $doc->current_version_id = $version->id;
+            $doc->revision_number = is_numeric($doc->revision_number) ? ((int)$doc->revision_number + 1) : 1;
+            $doc->revision_date = now();
+            $doc->approved_by = $user->id;
+            $doc->approved_at = now();
+            $doc->save();
 
             // optional audit
             if (class_exists(\App\Models\AuditLog::class)) {
                 \App\Models\AuditLog::create([
-                    'event' => 'approve_version_by_director',
+                    'event' => 'director_approve',
                     'user_id' => $user->id,
                     'document_id' => $doc->id,
                     'document_version_id' => $version->id,
-                    'detail' => json_encode(['note'=>'Approved by Director']),
+                    'detail' => json_encode(['note'=>'approved by director']),
                     'ip' => request()->ip(),
                 ]);
             }
         });
 
-        return redirect()->back()->with('success','Version approved and promoted to current.');
+        // FLASH message with document title
+        $docTitle = optional($version->document)->title ?? $version->document->doc_code ?? 'Dokumen';
+        return redirect()->route('approval.index')->with('success', "Berhasil diapprove: dokumen \"{$docTitle}\" sekarang resmi menjadi versi terbaru.");
     }
 
-    return redirect()->back()->with('error','You are not authorized to approve.');
+    return back()->with('error','You are not authorized to approve.');
 }
+
 
 
     /**
@@ -548,7 +564,7 @@ public function approveVersion(Request $request, DocumentVersion $version)
         if (! $version) {
             if (($validated['submit_for'] ?? 'save') === 'submit') {
                 $pending = DocumentVersion::where('document_id', $document->id)
-                    ->whereIn('status', ['submitted','pending'])
+                    ->whereIn('status', ['submitted','to_dir'])
                     ->exists();
                 if ($pending) {
                     return redirect()->route('documents.show', $document->id)

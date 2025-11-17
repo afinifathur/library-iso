@@ -88,10 +88,9 @@ Route::middleware('auth')->group(function () {
         Route::get('{version}',                      [DocumentVersionController::class, 'show'])
             ->whereNumber('version')->name('show');
 
-        // ===== added: mark version as viewed (POST) =====
+        // mark version as viewed (POST) — kept for MR flow
         Route::post('{version}/mark-viewed',         [DocumentVersionController::class, 'markViewed'])
             ->whereNumber('version')->name('markViewed');
-        // =================================================
 
         Route::post('{version}/submit',              [DocumentVersionController::class, 'submitForApproval'])
             ->whereNumber('version')->name('submit');
@@ -102,9 +101,7 @@ Route::middleware('auth')->group(function () {
         Route::put('{version}',                      [DocumentVersionController::class, 'update'])
             ->whereNumber('version')->name('update');
 
-        // NOTE: choose-compare handler lives on DocumentController (chooseCompare)
-        // Map the choose-compare routes to DocumentController::chooseCompare so the
-        // controller method is found and blade checks for either route name succeed.
+        // convenience aliases for choose-compare
         Route::get('{version}/choose-compare',       [DocumentController::class, 'chooseCompare'])
             ->whereNumber('version')->name('chooseCompare');
 
@@ -116,7 +113,6 @@ Route::middleware('auth')->group(function () {
     |--------------------------------------------------------------------------
     | Drafts
     |--------------------------------------------------------------------------
-    | Konsistenkan semua route drafts di sini (hindari duplikasi).
     */
     Route::prefix('drafts')->name('drafts.')->group(function () {
         Route::get('/',                                 [DraftController::class, 'index'])->name('index');
@@ -127,38 +123,38 @@ Route::middleware('auth')->group(function () {
         Route::get('{version}/edit',                    [DraftController::class, 'edit'])
             ->whereNumber('version')->name('edit');
 
-        // prefer DELETE if possible; keep POST for compatibility with HTML forms
+        // prefer DELETE; POST kept for HTML form compatibility
         Route::post('{version}/delete',                 [DraftController::class, 'destroy'])
             ->whereNumber('version')->name('destroy');
 
         Route::post('{version}/submit',                 [DraftController::class, 'submit'])
             ->whereNumber('version')->name('submit');
 
-        // Optional reopen (jika fitur diperlukan)
+        // optional reopen
         Route::post('{version}/reopen',                 [DraftController::class, 'reopen'])
             ->whereNumber('version')->name('reopen');
     });
 
     /*
     |--------------------------------------------------------------------------
-    | Approval Queue
+    | Approval (single entrypoint + explicit POST actions)
     |--------------------------------------------------------------------------
+    |
+    | Controller (ApprovalController@index) will decide which queue to show
+    | based on the user's role. Approve/reject POST routes map to clear
+    | controller methods (approve / reject).
+    |
     */
-    Route::prefix('approval')->name('approval.')->group(function () {
-        // consider adding middleware('role:mr|director') here if desired
-        Route::get('',                                    [ApprovalController::class, 'index'])->name('index');
+    Route::get('/approval', [ApprovalController::class, 'index'])
+        ->name('approval.index');
 
-        Route::get('{version}/view',                      [ApprovalController::class, 'view'])
-            ->whereNumber('version')->name('view');
+    Route::post('/approval/{version}/approve', [ApprovalController::class, 'approve'])
+        ->whereNumber('version')->name('approval.approve');
 
-        Route::post('{version}/approve',                  [ApprovalController::class, 'approve'])
-            ->whereNumber('version')->name('approve');
+    Route::post('/approval/{version}/reject', [ApprovalController::class, 'reject'])
+        ->whereNumber('version')->name('approval.reject');
 
-        Route::post('{version}/reject',                   [ApprovalController::class, 'reject'])
-            ->whereNumber('version')->name('reject');
-    });
-
-    // Optional alias untuk approval queue
+    // Optional legacy alias (keeps backward compatibility)
     Route::get('/approval-queue', [ApprovalController::class, 'index'])
         ->name('approval.queue');
 });

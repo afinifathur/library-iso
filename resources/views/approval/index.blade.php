@@ -22,7 +22,6 @@
         </nav>
     </header>
 
-    {{-- toolbar --}}
     <div class="mb-3" style="display:flex;gap:8px;align-items:center;margin-top:1rem">
         <a href="{{ route('drafts.index') }}" class="btn">Draft Container</a>
         <button class="btn btn-muted" onclick="location.reload()">Refresh</button>
@@ -46,21 +45,55 @@
             </thead>
             <tbody>
                 @php
-                    $rows = $pendingVersions ?? $pending ?? collect();
-
-                    // compute current user roles once (robust)
+                    // canonical variable: $rows (fallbacks for compatibility)
+                    $rows = $rows ?? $pending ?? $pendingVersions ?? collect();
                     $currentUser = auth()->user();
-                    $userRoleNames = [];
-                    if ($currentUser) {
-                        if (method_exists($currentUser, 'getRoleNames')) {
-                            try { $userRoleNames = $currentUser->getRoleNames()->map(fn($n)=>strtolower($n))->toArray(); } catch (\Throwable $e) {}
-                        } elseif (method_exists($currentUser, 'roles')) {
-                            try { $userRoleNames = $currentUser->roles()->pluck('name')->map(fn($n)=>strtolower($n))->toArray(); } catch (\Throwable $e) {}
-                        } elseif (isset($currentUser->roles) && is_iterable($currentUser->roles)) {
-                            $userRoleNames = collect($currentUser->roles)->pluck('name')->map(fn($n)=>strtolower($n))->toArray();
+
+                    // robust role checks (works with spatie or plain roles)
+                    $userHasRole = function ($user, $roleName) {
+                        if (! $user) return false;
+                        $rLower = strtolower($roleName);
+
+                        if (method_exists($user, 'hasRole')) {
+                            try { if ($user->hasRole($roleName)) return true; } catch (\Throwable $e) {}
                         }
-                    }
-                    $globalCanApprove = !empty($currentUser) && (in_array('mr', $userRoleNames, true) || in_array('director', $userRoleNames, true) || in_array('admin', $userRoleNames, true));
+                        if (method_exists($user, 'hasAnyRole')) {
+                            try { if ($user->hasAnyRole([$roleName])) return true; } catch (\Throwable $e) {}
+                        }
+                        if (method_exists($user, 'getRoleNames')) {
+                            try {
+                                $names = $user->getRoleNames()->map(fn($n) => strtolower((string)$n))->toArray();
+                                if (in_array($rLower, $names, true)) return true;
+                            } catch (\Throwable $e) {}
+                        }
+                        if (method_exists($user, 'roles')) {
+                            try {
+                                $names = $user->roles()->pluck('name')->map(fn($n) => strtolower((string)$n))->toArray();
+                                if (in_array($rLower, $names, true)) return true;
+                            } catch (\Throwable $e) {}
+                        }
+                        if (isset($user->roles) && is_iterable($user->roles)) {
+                            try {
+                                $names = collect($user->roles)->pluck('name')->map(fn($n) => strtolower((string)$n))->toArray();
+                                if (in_array($rLower, $names, true)) return true;
+                            } catch (\Throwable $e) {}
+                        }
+
+                        // whitelist emails
+                        $whitelist = ['direktur@peroniks.com', 'adminqc@peroniks.com'];
+                        if (! empty($user->email) && in_array(strtolower($user->email), $whitelist, true)) {
+                            return true;
+                        }
+
+                        return false;
+                    };
+
+                    $isAdmin = $userHasRole($currentUser, 'admin');
+                    $isDirector = $userHasRole($currentUser, 'director');
+                    $isMr = $userHasRole($currentUser, 'mr');
+                    $isKabag = $userHasRole($currentUser, 'kabag');
+
+                    $normalizeStage = fn($s) => strtoupper(trim((string)($s ?? '')));
                 @endphp
 
                 @forelse($rows as $v)
@@ -71,14 +104,20 @@
                         $title = $doc->title ?? $v->title ?? '-';
                         $dept = optional($doc->department)->code ?? optional($doc->department)->name ?? '-';
                         $versionLabel = $v->version_label ?? $v->label ?? '-';
-                        $creator = optional($v->creator ?? $v->created_by_user);
+                        $creator = optional($v->creator ?? (isset($v->created_by_user) ? $v->created_by_user : null));
                         $creatorDisplay = $creator->email ?? $creator->name ?? '-';
                         $when = optional($v->created_at)->format('Y-m-d') ?? '-';
 
-                        // determine if MR has viewed this version
-                        $seenByMr = !empty($v->mr_viewed_at);
-                        // row-level permission to approve/reject
-                        $canApproveThis = $globalCanApprove && $seenByMr;
+                        $approvalStage = $normalizeStage($v->approval_stage ?? '');
+                        $status = strtolower((string)($v->status ?? ''));
+
+                        // Removed "open-first" gating: decisions are role/stage/status based only
+                        $statusOkForMr = in_array($status, ['submitted','pending','draft'], true);
+                        $statusOkForDirector = in_array($status, ['to_dir','submitted'], true);
+
+                        $canMrForward = $isMr && $approvalStage === 'MR' && $statusOkForMr;
+                        $canDirectorApprove = ($isDirector || $isAdmin) && str_starts_with($approvalStage, 'DIR') && $statusOkForDirector;
+                        $canReject = $canMrForward || $canDirectorApprove || ($isKabag && $approvalStage === 'KABAG');
                     @endphp
 
                     <tr data-version-id="{{ e($v->id) }}" data-doc-id="{{ e($docId) }}">
@@ -104,39 +143,47 @@
 
                         <td>
                             <div class="action-buttons" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
-                                <!-- Open -->
+                                <!-- Open (always available) -->
                                 @if($v->id)
                                     <a href="{{ route('versions.show', $v->id) }}" target="_blank" rel="noopener noreferrer" class="btn btn-outline-primary btn-sm action-open" aria-label="Open version {{ e($versionLabel) }}">Open</a>
                                 @else
                                     <button class="btn btn-outline-primary btn-sm" disabled>Open</button>
                                 @endif
 
-                                <!-- Approve (form) -->
-                                <form method="POST" action="{{ route('approval.approve', $v->id) }}" class="d-inline-block action-form-approve" style="display:inline">
-                                    @csrf
-                                    <button type="submit"
-                                            class="btn btn-success btn-sm btn-approve"
-                                            @unless($canApproveThis) disabled aria-disabled="true" @endunless>
-                                        Approve
-                                    </button>
-                                </form>
+                                <!-- Approve / Forward (no "open-first" gating) -->
+                                @if($canMrForward)
+                                    <form method="POST" action="{{ route('approval.approve', $v->id) }}" class="d-inline-block action-form-approve" style="display:inline">
+                                        @csrf
+                                        <button type="submit" class="btn btn-warning btn-sm btn-approve" title="Forward to Director">Forward to Director</button>
+                                    </form>
+                                @elseif($canDirectorApprove)
+                                    <form method="POST" action="{{ route('approval.approve', $v->id) }}" class="d-inline-block action-form-approve" style="display:inline">
+                                        @csrf
+                                        <button type="submit" class="btn btn-success btn-sm btn-approve" title="Final Approve">Approve</button>
+                                    </form>
+                                @else
+                                    <button class="btn btn-success btn-sm" disabled>Approve</button>
+                                @endif
 
                                 <!-- Reject -->
-                                <button type="button"
-                                        class="btn btn-danger btn-sm btn-reject"
-                                        @unless($canApproveThis) disabled aria-disabled="true" @endunless
-                                        data-version-id="{{ e($v->id) }}"
-                                        data-doc-code="{{ e($docCode) }}"
-                                        aria-label="Reject version {{ e($versionLabel) }}">
-                                    Reject
-                                </button>
-
-                                {{-- Indicator when mr_viewed_at is missing --}}
-                                @unless($seenByMr)
-                                    <span class="small-muted" title="Menunggu MR membuka dokumen" style="font-size:12px;margin-left:6px;">(Waiting MR)</span>
+                                @if($canReject)
+                                    <button type="button"
+                                            class="btn btn-danger btn-sm btn-reject"
+                                            data-version-id="{{ e($v->id) }}"
+                                            data-doc-code="{{ e($docCode) }}"
+                                            aria-label="Reject version {{ e($versionLabel) }}">
+                                        Reject
+                                    </button>
                                 @else
+                                    <button class="btn btn-danger btn-sm" disabled>Reject</button>
+                                @endif
+
+                                {{-- Informational indicator --}}
+                                @if(!empty($v->mr_viewed_at))
                                     <span class="text-success" style="font-size:12px;margin-left:6px;" title="Viewed by MR">Viewed</span>
-                                @endunless
+                                @else
+                                    <span class="small-muted" title="Menunggu MR membuka dokumen" style="font-size:12px;margin-left:6px;">(Waiting MR)</span>
+                                @endif
                             </div>
                         </td>
                     </tr>
@@ -150,7 +197,7 @@
     </section>
 
     <div class="d-flex justify-content-end" style="margin-top:12px">
-        @if(method_exists($rows, 'links')) {{ $rows->links() }} @endif
+        @if(method_exists($rows, 'links')) {!! $rows->links() !!} @endif
     </div>
 </div>
 
@@ -183,49 +230,20 @@
 @section('footerscripts')
 <script>
 (() => {
-  // configuration values from blade (safe)
   const baseApprovalUrl = "{{ rtrim(url('/approval'), '/') }}"; // e.g. /approval
   const csrfToken = "{{ csrf_token() }}";
 
-  // helpers
-  const enableRowActions = (tr) => {
-    if (!tr) return;
-    tr.querySelectorAll('.btn-approve, .btn-reject').forEach(btn => {
-      btn.removeAttribute('disabled');
-      btn.removeAttribute('aria-disabled');
-    });
-  };
-
-  // When "Open" is clicked (opens in new tab), enable approve/reject buttons for that row immediately.
-  document.querySelectorAll('.action-open').forEach(link => {
-    link.addEventListener('click', function () {
-      const tr = this.closest('tr');
-      if (!tr) return;
-      // small delay to avoid race with tab opening
-      setTimeout(() => enableRowActions(tr), 250);
-    });
-  });
-
-  // Approve: submit form normally. For extra safety, prevent if buttons still disabled
+  // Approve forms: allow normal POST (no open-first gating)
   document.querySelectorAll('.action-form-approve').forEach(form => {
     form.addEventListener('submit', function (e) {
-      const btn = this.querySelector('.btn-approve');
-      if (btn && btn.disabled) {
-        e.preventDefault();
-        alert('Anda tidak boleh menyetujui sebelum MR membuka dokumen (Viewed).');
-        return false;
-      }
-      // allow normal POST
+      // optional confirmation:
+      // if (!confirm('Yakin ingin meneruskan / menyetujui versi ini?')) { e.preventDefault(); }
     });
   });
 
-  // Reject: open modal only if button enabled
+  // Reject: open modal
   document.querySelectorAll('.btn-reject').forEach(btn => {
     btn.addEventListener('click', function () {
-      if (this.disabled) {
-        alert('Anda tidak boleh menolak sebelum MR membuka dokumen (Viewed).');
-        return;
-      }
       const vid = this.getAttribute('data-version-id');
       const docCode = this.getAttribute('data-doc-code') || '';
       document.getElementById('reject_version_id').value = vid || '';
@@ -235,7 +253,6 @@
     });
   });
 
-  // Modal controls
   window.showRejectModal = function () {
     const el = document.getElementById('rejectModal');
     if (!el) return;
@@ -250,7 +267,6 @@
     el.setAttribute('aria-hidden', 'true');
   };
 
-  // Submit reject via fetch to approval.reject
   const rejectBtn = document.getElementById('rejectSubmitBtn');
   if (rejectBtn) {
     rejectBtn.addEventListener('click', function () {
@@ -258,16 +274,11 @@
       const vid = document.getElementById('reject_version_id').value;
       const reason = document.getElementById('reject_reason').value.trim();
 
-      if (!reason) {
-        alert('Alasan reject wajib diisi.');
-        return;
-      }
-      if (!vid) {
-        alert('Version ID tidak terdeteksi.');
-        return;
-      }
+      if (!reason) { alert('Alasan reject wajib diisi.'); return; }
+      if (!vid) { alert('Version ID tidak terdeteksi.'); return; }
 
       btn.disabled = true;
+      const prevText = btn.textContent;
       btn.textContent = 'Submitting...';
 
       fetch(`${baseApprovalUrl}/${encodeURIComponent(vid)}/reject`, {
@@ -278,7 +289,7 @@
           'X-CSRF-TOKEN': csrfToken,
           'X-Requested-With': 'XMLHttpRequest'
         },
-        body: JSON.stringify({ notes: reason })
+        body: JSON.stringify({ rejected_reason: reason })
       })
       .then(async res => {
         let payload = {};
@@ -300,7 +311,7 @@
       })
       .finally(() => {
         btn.disabled = false;
-        btn.textContent = 'Submit Reject';
+        btn.textContent = prevText;
       });
     });
   }
