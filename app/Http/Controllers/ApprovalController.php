@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use Symfony\Component\HttpFoundation\Response;
+use Illuminate\Support\Facades\Log;
 
 class ApprovalController extends Controller
 {
@@ -117,7 +118,18 @@ class ApprovalController extends Controller
      */
     public function approve(Request $request, DocumentVersion $version)
     {
+         $user = $request->user();
+    
         $user = $request->user() ?? Auth::user();
+        Log::info('approve called', [
+        'user_id' => $user?->id,
+        'user_roles' => $user && method_exists($user, 'getRoleNames') ? $user->getRoleNames() : null,
+        'version_id' => $version->id,
+        'version_status' => $version->status,
+        'version_stage' => $version->approval_stage,
+        'request_all' => $request->all(),
+    ]);
+
         if (! $user) abort(Response::HTTP_FORBIDDEN);
 
         // MR: forward to Director
