@@ -16,17 +16,19 @@ use App\Http\Controllers\CategoryController;
 |--------------------------------------------------------------------------
 */
 Route::middleware('guest')->group(function () {
-    Route::get('/login',    [AuthController::class, 'showLoginForm'])->name('login');
-    Route::post('/login',   [AuthController::class, 'login'])->name('login.attempt');
+    Route::get('/login',     [AuthController::class, 'showLoginForm'])->name('login');
+    Route::post('/login',    [AuthController::class, 'login'])->name('login.attempt');
 
-    Route::get('/register', [AuthController::class, 'showRegisterForm'])->name('register');
-    Route::post('/register',[AuthController::class, 'register'])->name('register.attempt');
+    Route::get('/register',  [AuthController::class, 'showRegisterForm'])->name('register');
+    Route::post('/register', [AuthController::class, 'register'])->name('register.attempt');
 });
 
+// Logout (authenticated)
 Route::post('/logout', [AuthController::class, 'logout'])
     ->middleware('auth')
     ->name('logout');
 
+// Redirect root to login (adjust if you prefer dashboard for authenticated users)
 Route::get('/', fn() => redirect()->route('login'));
 
 /*
@@ -37,8 +39,7 @@ Route::get('/', fn() => redirect()->route('login'));
 Route::middleware('auth')->group(function () {
 
     // Dashboard
-    Route::get('/dashboard', [DashboardController::class, 'index'])
-        ->name('dashboard.index');
+    Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard.index');
 
     /*
     |--------------------------------------------------------------------------
@@ -46,25 +47,25 @@ Route::middleware('auth')->group(function () {
     |--------------------------------------------------------------------------
     */
     Route::prefix('documents')->name('documents.')->group(function () {
-        Route::get('',                 [DocumentController::class, 'index'])->name('index');
-        Route::get('create',           [DocumentController::class, 'create'])->name('create');
-        Route::post('',                [DocumentController::class, 'store'])->name('store');
-        Route::post('upload-pdf',      [DocumentController::class, 'uploadPdf'])->name('uploadPdf');
+        Route::get('/',                    [DocumentController::class, 'index'])->name('index');
+        Route::get('/create',              [DocumentController::class, 'create'])->name('create');
+        Route::post('/',                   [DocumentController::class, 'store'])->name('store');
+        Route::post('/upload-pdf',         [DocumentController::class, 'uploadPdf'])->name('uploadPdf');
 
-        Route::get('{document}',               [DocumentController::class, 'show'])
+        Route::get('/{document}',          [DocumentController::class, 'show'])
             ->whereNumber('document')->name('show');
 
-        Route::get('{document}/compare',       [DocumentController::class, 'compare'])
+        Route::get('/{document}/compare',  [DocumentController::class, 'compare'])
             ->whereNumber('document')->name('compare');
 
-        Route::get('{document}/edit',          [DocumentController::class, 'edit'])
+        Route::get('/{document}/edit',     [DocumentController::class, 'edit'])
             ->whereNumber('document')->name('edit');
 
-        Route::put('{document}',               [DocumentController::class, 'updateCombined'])
+        Route::put('/{document}',          [DocumentController::class, 'updateCombined'])
             ->whereNumber('document')->name('updateCombined');
 
-        // versions related to documents (named as documents.versions.download)
-        Route::get('versions/{version}/download', [DocumentController::class, 'downloadVersion'])
+        // version download by id (named documents.versions.download)
+        Route::get('/versions/{version}/download', [DocumentController::class, 'downloadVersion'])
             ->whereNumber('version')->name('versions.download');
     });
 
@@ -73,8 +74,7 @@ Route::middleware('auth')->group(function () {
     | Categories
     |--------------------------------------------------------------------------
     */
-    Route::get('/categories', [CategoryController::class, 'index'])
-        ->name('categories.index');
+    Route::get('/categories', [CategoryController::class, 'index'])->name('categories.index');
 
     /*
     |--------------------------------------------------------------------------
@@ -82,30 +82,29 @@ Route::middleware('auth')->group(function () {
     |--------------------------------------------------------------------------
     */
     Route::prefix('versions')->name('versions.')->group(function () {
-        Route::get('create',                         [DocumentVersionController::class, 'create'])->name('create');
-        Route::post('',                              [DocumentVersionController::class, 'store'])->name('store');
+        Route::get('/create',                     [DocumentVersionController::class, 'create'])->name('create');
+        Route::post('/',                          [DocumentVersionController::class, 'store'])->name('store');
 
-        Route::get('{version}',                      [DocumentVersionController::class, 'show'])
+        Route::get('/{version}',                  [DocumentVersionController::class, 'show'])
             ->whereNumber('version')->name('show');
 
-        // mark version as viewed (POST) — kept for MR flow
-        Route::post('{version}/mark-viewed',         [DocumentVersionController::class, 'markViewed'])
+        Route::post('/{version}/mark-viewed',     [DocumentVersionController::class, 'markViewed'])
             ->whereNumber('version')->name('markViewed');
 
-        Route::post('{version}/submit',              [DocumentVersionController::class, 'submitForApproval'])
+        Route::post('/{version}/submit',          [DocumentVersionController::class, 'submitForApproval'])
             ->whereNumber('version')->name('submit');
 
-        Route::get('{version}/edit',                 [DocumentVersionController::class, 'edit'])
+        Route::get('/{version}/edit',             [DocumentVersionController::class, 'edit'])
             ->whereNumber('version')->name('edit');
 
-        Route::put('{version}',                      [DocumentVersionController::class, 'update'])
+        Route::put('/{version}',                  [DocumentVersionController::class, 'update'])
             ->whereNumber('version')->name('update');
 
         // convenience aliases for choose-compare
-        Route::get('{version}/choose-compare',       [DocumentController::class, 'chooseCompare'])
+        Route::get('/{version}/choose-compare',   [DocumentController::class, 'chooseCompare'])
             ->whereNumber('version')->name('chooseCompare');
 
-        Route::get('{version}/choose_compare',       [DocumentController::class, 'chooseCompare'])
+        Route::get('/{version}/choose_compare',   [DocumentController::class, 'chooseCompare'])
             ->whereNumber('version')->name('choose_compare');
     });
 
@@ -115,38 +114,32 @@ Route::middleware('auth')->group(function () {
     |--------------------------------------------------------------------------
     */
     Route::prefix('drafts')->name('drafts.')->group(function () {
-        Route::get('/',                                 [DraftController::class, 'index'])->name('index');
+        Route::get('/',                          [DraftController::class, 'index'])->name('index');
 
-        Route::get('{version}',                         [DraftController::class, 'show'])
+        Route::get('/{version}',                 [DraftController::class, 'show'])
             ->whereNumber('version')->name('show');
 
-        Route::get('{version}/edit',                    [DraftController::class, 'edit'])
+        Route::get('/{version}/edit',            [DraftController::class, 'edit'])
             ->whereNumber('version')->name('edit');
 
-        // prefer DELETE; POST kept for HTML form compatibility
-        Route::post('{version}/delete',                 [DraftController::class, 'destroy'])
+        // For HTML forms that cannot send DELETE, provide POST alias
+        Route::post('/{version}/delete',         [DraftController::class, 'destroy'])
             ->whereNumber('version')->name('destroy');
 
-        Route::post('{version}/submit',                 [DraftController::class, 'submit'])
+        Route::post('/{version}/submit',         [DraftController::class, 'submit'])
             ->whereNumber('version')->name('submit');
 
-        // optional reopen
-        Route::post('{version}/reopen',                 [DraftController::class, 'reopen'])
+        Route::post('/{version}/reopen',         [DraftController::class, 'reopen'])
             ->whereNumber('version')->name('reopen');
     });
 
     /*
     |--------------------------------------------------------------------------
-    | Approval (single entrypoint + explicit POST actions)
+    | Approval routes (single index + explicit approve/reject)
     |--------------------------------------------------------------------------
-    |
-    | Controller (ApprovalController@index) will decide which queue to show
-    | based on the user's role. Approve/reject POST routes map to clear
-    | controller methods (approve / reject).
-    |
+    | Uses route-model-binding: `{version}` will resolve to DocumentVersion model
     */
-    Route::get('/approval', [ApprovalController::class, 'index'])
-        ->name('approval.index');
+    Route::get('/approval', [ApprovalController::class, 'index'])->name('approval.index');
 
     Route::post('/approval/{version}/approve', [ApprovalController::class, 'approve'])
         ->whereNumber('version')->name('approval.approve');
@@ -154,9 +147,8 @@ Route::middleware('auth')->group(function () {
     Route::post('/approval/{version}/reject', [ApprovalController::class, 'reject'])
         ->whereNumber('version')->name('approval.reject');
 
-    // Optional legacy alias (keeps backward compatibility)
-    Route::get('/approval-queue', [ApprovalController::class, 'index'])
-        ->name('approval.queue');
+    // Legacy alias (optional)
+    Route::get('/approval-queue', [ApprovalController::class, 'index'])->name('approval.queue');
 });
 
 /*

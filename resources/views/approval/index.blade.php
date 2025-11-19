@@ -22,13 +22,56 @@
         </nav>
     </header>
 
-    <div class="mb-3" style="display:flex;gap:8px;align-items:center;margin-top:1rem">
-        <a href="{{ route('drafts.index') }}" class="btn">Draft Container</a>
-        <button class="btn btn-muted" onclick="location.reload()">Refresh</button>
-    </div>
-
-    <section class="table-responsive card-section card-inner" aria-labelledby="pendingTableTitle">
+    <section class="table-responsive card-section card-inner" aria-labelledby="pendingTableTitle" style="margin-top:1rem;">
         <h2 id="pendingTableTitle" class="sr-only">Pending approvals</h2>
+
+        @php
+            // canonical rows variable + current user + role helpers
+            $rows = $rows ?? $pending ?? $pendingVersions ?? collect();
+            $currentUser = auth()->user();
+
+            $userHasRole = function ($user, $roleName) {
+                if (! $user) return false;
+                $rLower = strtolower($roleName);
+
+                if (method_exists($user, 'hasRole')) {
+                    try { if ($user->hasRole($roleName)) return true; } catch (\Throwable $e) {}
+                }
+                if (method_exists($user, 'hasAnyRole')) {
+                    try { if ($user->hasAnyRole([$roleName])) return true; } catch (\Throwable $e) {}
+                }
+                if (method_exists($user, 'getRoleNames')) {
+                    try {
+                        $names = $user->getRoleNames()->map(fn($n)=>strtolower((string)$n))->toArray();
+                        if (in_array($rLower, $names, true)) return true;
+                    } catch (\Throwable $e) {}
+                }
+                if (method_exists($user, 'roles')) {
+                    try {
+                        $names = $user->roles()->pluck('name')->map(fn($n)=>strtolower((string)$n))->toArray();
+                        if (in_array($rLower, $names, true)) return true;
+                    } catch (\Throwable $e) {}
+                }
+                if (isset($user->roles) && is_iterable($user->roles)) {
+                    try {
+                        $names = collect($user->roles)->pluck('name')->map(fn($n)=>strtolower((string)$n))->toArray();
+                        if (in_array($rLower, $names, true)) return true;
+                    } catch (\Throwable $e) {}
+                }
+
+                $whitelist = ['direktur@peroniks.com', 'adminqc@peroniks.com'];
+                if (! empty($user->email) && in_array(strtolower($user->email), $whitelist, true)) return true;
+
+                return false;
+            };
+
+            $isAdmin = $userHasRole($currentUser, 'admin');
+            $isDirector = $userHasRole($currentUser, 'director');
+            $isMr = $userHasRole($currentUser, 'mr');
+            $isKabag = $userHasRole($currentUser, 'kabag');
+
+            $normalizeStage = fn($s) => strtoupper(trim((string)($s ?? '')));
+        @endphp
 
         <table class="table" role="table" aria-label="Pending approvals" style="width:100%;border-collapse:collapse">
             <thead>
@@ -43,59 +86,8 @@
                     <th style="width:270px">Aksi</th>
                 </tr>
             </thead>
+
             <tbody>
-                @php
-                    // canonical variable: $rows (fallbacks for compatibility)
-                    $rows = $rows ?? $pending ?? $pendingVersions ?? collect();
-                    $currentUser = auth()->user();
-
-                    // robust role checks (works with spatie or plain roles)
-                    $userHasRole = function ($user, $roleName) {
-                        if (! $user) return false;
-                        $rLower = strtolower($roleName);
-
-                        if (method_exists($user, 'hasRole')) {
-                            try { if ($user->hasRole($roleName)) return true; } catch (\Throwable $e) {}
-                        }
-                        if (method_exists($user, 'hasAnyRole')) {
-                            try { if ($user->hasAnyRole([$roleName])) return true; } catch (\Throwable $e) {}
-                        }
-                        if (method_exists($user, 'getRoleNames')) {
-                            try {
-                                $names = $user->getRoleNames()->map(fn($n) => strtolower((string)$n))->toArray();
-                                if (in_array($rLower, $names, true)) return true;
-                            } catch (\Throwable $e) {}
-                        }
-                        if (method_exists($user, 'roles')) {
-                            try {
-                                $names = $user->roles()->pluck('name')->map(fn($n) => strtolower((string)$n))->toArray();
-                                if (in_array($rLower, $names, true)) return true;
-                            } catch (\Throwable $e) {}
-                        }
-                        if (isset($user->roles) && is_iterable($user->roles)) {
-                            try {
-                                $names = collect($user->roles)->pluck('name')->map(fn($n) => strtolower((string)$n))->toArray();
-                                if (in_array($rLower, $names, true)) return true;
-                            } catch (\Throwable $e) {}
-                        }
-
-                        // whitelist emails
-                        $whitelist = ['direktur@peroniks.com', 'adminqc@peroniks.com'];
-                        if (! empty($user->email) && in_array(strtolower($user->email), $whitelist, true)) {
-                            return true;
-                        }
-
-                        return false;
-                    };
-
-                    $isAdmin = $userHasRole($currentUser, 'admin');
-                    $isDirector = $userHasRole($currentUser, 'director');
-                    $isMr = $userHasRole($currentUser, 'mr');
-                    $isKabag = $userHasRole($currentUser, 'kabag');
-
-                    $normalizeStage = fn($s) => strtoupper(trim((string)($s ?? '')));
-                @endphp
-
                 @forelse($rows as $v)
                     @php
                         $doc = $v->document ?? null;
@@ -111,12 +103,11 @@
                         $approvalStage = $normalizeStage($v->approval_stage ?? '');
                         $status = strtolower((string)($v->status ?? ''));
 
-                        // Removed "open-first" gating: decisions are role/stage/status based only
                         $statusOkForMr = in_array($status, ['submitted','pending','draft'], true);
                         $statusOkForDirector = in_array($status, ['to_dir','submitted'], true);
 
                         $canMrForward = $isMr && $approvalStage === 'MR' && $statusOkForMr;
-                        $canDirectorApprove = ($isDirector || $isAdmin) && str_starts_with($approvalStage, 'DIR') && $statusOkForDirector;
+                        $canDirectorApprove = ($isDirector || $isAdmin) && (str_starts_with($approvalStage, 'DIR') || $approvalStage === 'DIRECTOR') && $statusOkForDirector;
                         $canReject = $canMrForward || $canDirectorApprove || ($isKabag && $approvalStage === 'KABAG');
                     @endphp
 
@@ -141,44 +132,43 @@
                         <td>{{ e($creatorDisplay) }}</td>
                         <td>{{ e($when) }}</td>
 
+                        {{-- ACTIONS: Open / Approve / Reject --}}
                         <td>
                             <div class="action-buttons" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
-                                <!-- Open (always available) -->
+                                {{-- Open --}}
                                 @if($v->id)
                                     <a href="{{ route('versions.show', $v->id) }}" target="_blank" rel="noopener noreferrer" class="btn btn-outline-primary btn-sm action-open" aria-label="Open version {{ e($versionLabel) }}">Open</a>
                                 @else
                                     <button class="btn btn-outline-primary btn-sm" disabled>Open</button>
                                 @endif
 
-                                <!-- Approve / Forward (no "open-first" gating) -->
-                                @if($canMrForward)
-                                    <form method="POST" action="{{ route('approval.approve', $v->id) }}" class="d-inline-block action-form-approve" style="display:inline">
+                                {{-- Approve (green) - MR and Director/Admin both see a green Approve button when allowed --}}
+                                @if($canMrForward || $canDirectorApprove)
+                                    <form method="POST" action="{{ route('approval.approve', $v->id) }}" class="d-inline-block" style="display:inline;">
                                         @csrf
-                                        <button type="submit" class="btn btn-warning btn-sm btn-approve" title="Forward to Director">Forward to Director</button>
-                                    </form>
-                                @elseif($canDirectorApprove)
-                                    <form method="POST" action="{{ route('approval.approve', $v->id) }}" class="d-inline-block action-form-approve" style="display:inline">
-                                        @csrf
-                                        <button type="submit" class="btn btn-success btn-sm btn-approve" title="Final Approve">Approve</button>
+                                        <button type="submit" class="btn btn-success btn-sm" title="Approve">
+                                            Approve
+                                        </button>
                                     </form>
                                 @else
                                     <button class="btn btn-success btn-sm" disabled>Approve</button>
                                 @endif
 
-                                <!-- Reject -->
+                                {{-- Reject --}}
                                 @if($canReject)
-                                    <button type="button"
-                                            class="btn btn-danger btn-sm btn-reject"
-                                            data-version-id="{{ e($v->id) }}"
-                                            data-doc-code="{{ e($docCode) }}"
-                                            aria-label="Reject version {{ e($versionLabel) }}">
+                                    <button
+                                        type="button"
+                                        class="btn btn-danger btn-sm btn-reject"
+                                        data-version-id="{{ e($v->id) }}"
+                                        data-doc-code="{{ e($docCode) }}"
+                                        aria-label="Reject version {{ e($versionLabel) }}">
                                         Reject
                                     </button>
                                 @else
                                     <button class="btn btn-danger btn-sm" disabled>Reject</button>
                                 @endif
 
-                                {{-- Informational indicator --}}
+                                {{-- small info --}}
                                 @if(!empty($v->mr_viewed_at))
                                     <span class="text-success" style="font-size:12px;margin-left:6px;" title="Viewed by MR">Viewed</span>
                                 @else
@@ -194,11 +184,11 @@
                 @endforelse
             </tbody>
         </table>
-    </section>
 
-    <div class="d-flex justify-content-end" style="margin-top:12px">
-        @if(method_exists($rows, 'links')) {!! $rows->links() !!} @endif
-    </div>
+        <div class="d-flex justify-content-end" style="margin-top:12px">
+            @if(method_exists($rows, 'links')) {!! $rows->links() !!} @endif
+        </div>
+    </section>
 </div>
 
 {{-- Reject Modal --}}
@@ -230,18 +220,18 @@
 @section('footerscripts')
 <script>
 (() => {
-  const baseApprovalUrl = "{{ rtrim(url('/approval'), '/') }}"; // e.g. /approval
+  const baseApprovalUrl = "{{ rtrim(url('/approval'), '/') }}";
   const csrfToken = "{{ csrf_token() }}";
 
-  // Approve forms: allow normal POST (no open-first gating)
-  document.querySelectorAll('.action-form-approve').forEach(form => {
+  // Approve forms: allow normal submission (optionally you can add confirm)
+  document.querySelectorAll('form[action^="{{ url('/approval') }}"]').forEach(form => {
     form.addEventListener('submit', function (e) {
-      // optional confirmation:
-      // if (!confirm('Yakin ingin meneruskan / menyetujui versi ini?')) { e.preventDefault(); }
+      // uncomment to enable a confirm prompt:
+      // if (!confirm('Yakin ingin meneruskan / menyetujui versi ini?')) e.preventDefault();
     });
   });
 
-  // Reject: open modal
+  // Reject buttons open modal
   document.querySelectorAll('.btn-reject').forEach(btn => {
     btn.addEventListener('click', function () {
       const vid = this.getAttribute('data-version-id');
@@ -267,6 +257,7 @@
     el.setAttribute('aria-hidden', 'true');
   };
 
+  // Submit reject via fetch to {baseApprovalUrl}/{id}/reject (POST)
   const rejectBtn = document.getElementById('rejectSubmitBtn');
   if (rejectBtn) {
     rejectBtn.addEventListener('click', function () {
@@ -316,7 +307,7 @@
     });
   }
 
-  // Select All checkbox
+  // Select all
   const selectAll = document.getElementById('selectAll');
   if (selectAll) {
     selectAll.addEventListener('change', (e) => {
