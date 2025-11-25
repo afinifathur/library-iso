@@ -12,7 +12,6 @@ use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
-// Optional diff library
 use Jfcherng\Diff\DiffHelper;
 
 class DocumentController extends Controller
@@ -37,9 +36,11 @@ class DocumentController extends Controller
                     $dq->where('code', $dept)->orWhere('id', $dept);
                 });
             })
-            // prefer category_id filter (frontend uses category_id)
             ->when($request->filled('category_id') || $request->filled('category'), function ($q) use ($request) {
-                $cat = $request->filled('category_id') ? $request->input('category_id') : $request->input('category');
+                $cat = $request->filled('category_id')
+                    ? $request->input('category_id')
+                    : $request->input('category');
+
                 $q->where(function ($qq) use ($cat) {
                     $qq->where('category_id', $cat)
                        ->orWhere('category', $cat);
@@ -61,9 +62,9 @@ class DocumentController extends Controller
             ->appends($request->query());
 
         return view('documents.index', [
-            'docs' => $docs,
+            'docs'        => $docs,
             'departments' => $departments,
-            'categories' => $categories,
+            'categories'  => $categories,
         ]);
     }
 
@@ -77,7 +78,7 @@ class DocumentController extends Controller
         if (class_exists(\App\Models\Category::class)) {
             $categories = \App\Models\Category::orderBy('name')->get();
         }
-        return view('documents.create', compact('departments','categories'));
+        return view('documents.create', compact('departments', 'categories'));
     }
 
     /**
@@ -92,7 +93,7 @@ class DocumentController extends Controller
             $categories = \App\Models\Category::orderBy('name')->get();
         }
 
-        return view('documents.edit', compact('document', 'departments','categories'));
+        return view('documents.edit', compact('document', 'departments', 'categories'));
     }
 
     /**
@@ -105,14 +106,29 @@ class DocumentController extends Controller
         $validated = $request->validate([
             'title'         => 'required|string|max:255',
             'doc_code'      => [
-                'required','string','max:120',
+                'required',
+                'string',
+                'max:120',
                 Rule::unique('documents', 'doc_code')->ignore($document->id),
             ],
             'department_id' => ['required','integer','exists:departments,id'],
             'category_id'   => ['nullable','integer','exists:categories,id'],
+            'related_links' => ['nullable','string'],
         ]);
 
-        $document->update($validated);
+        $document->update([
+            'title'         => $validated['title'],
+            'doc_code'      => $validated['doc_code'],
+            'department_id' => $validated['department_id'],
+            'category_id'   => $validated['category_id'] ?? $document->category_id,
+        ]);
+
+        if ($request->has('related_links')) {
+            $raw   = $request->input('related_links', '');
+            $links = $this->parseRelatedLinksInput($raw);
+            $document->related_links = $links;
+            $document->save();
+        }
 
         return redirect()
             ->route('documents.show', $document->id)
@@ -145,6 +161,7 @@ class DocumentController extends Controller
             'signed_by'      => 'nullable|string|max:255',
             'signed_at'      => 'nullable|date',
             'pasted_text'    => 'nullable|string|max:200000',
+            'related_links'  => 'nullable|string',
         ]);
 
         // Find / create document
@@ -154,8 +171,19 @@ class DocumentController extends Controller
             $docCode = $request->input('doc_code') ?: strtoupper(Str::slug($request->input('title'), '-'));
             $document = Document::firstOrCreate(
                 ['doc_code' => $docCode],
-                ['title' => $request->input('title'), 'department_id' => (int) $request->input('department_id')]
+                [
+                    'title'         => $request->input('title'),
+                    'department_id' => (int) $request->input('department_id'),
+                ]
             );
+        }
+
+        // simpan related_links kalau dikirim
+        if ($request->has('related_links')) {
+            $raw   = $request->input('related_links', '');
+            $links = $this->parseRelatedLinksInput($raw);
+            $document->related_links = $links;
+            $document->save();
         }
 
         $disk = Storage::disk('documents');
@@ -165,8 +193,8 @@ class DocumentController extends Controller
         if ($request->hasFile('master_file')) {
             $master      = $request->file('master_file');
             $safeName    = $this->safeFilename($master->getClientOriginalName());
-            $master_name = now()->timestamp.'_master_'.Str::random(6).'_'.$safeName;
-            $master_path = $document->doc_code.'/master/'.$master_name;
+            $master_name = now()->timestamp . '_master_' . Str::random(6) . '_' . $safeName;
+            $master_path = $document->doc_code . '/master/' . $master_name;
             $disk->put($master_path, file_get_contents($master->getRealPath()));
         }
 
@@ -177,8 +205,8 @@ class DocumentController extends Controller
         if ($request->hasFile('file')) {
             $file      = $request->file('file');
             $safeName  = $this->safeFilename($file->getClientOriginalName());
-            $filename  = now()->timestamp.'_'.Str::random(6).'_'.$safeName;
-            $file_path = $document->doc_code.'/'.$request->input('version_label').'/'.$filename;
+            $filename  = now()->timestamp . '_' . Str::random(6) . '_' . $safeName;
+            $file_path = $document->doc_code . '/' . $request->input('version_label') . '/' . $filename;
             $content   = file_get_contents($file->getRealPath());
             $disk->put($file_path, $content);
             $file_mime = $file->getClientMimeType() ?: 'application/pdf';
@@ -234,7 +262,7 @@ class DocumentController extends Controller
         }
 
         // Update document meta (do NOT set as current version here)
-        $document->revision_number = max(1, (int)($document->revision_number ?? 0) + 1);
+        $document->revision_number = max(1, (int) ($document->revision_number ?? 0) + 1);
         $document->revision_date   = now();
         $document->title           = $request->input('title');
         $document->department_id   = (int) $request->input('department_id');
@@ -252,7 +280,7 @@ class DocumentController extends Controller
                     'master' => $master_path,
                     'pasted' => $request->filled('pasted_text'),
                 ]),
-                'ip' => $request->ip(),
+                'ip'                  => $request->ip(),
             ]);
         }
 
@@ -268,7 +296,6 @@ class DocumentController extends Controller
     {
         $doc = Document::with('versions')->findOrFail($documentId);
 
-        // normalize versions[] or legacy params
         $versionsQuery = $request->query('versions', null);
 
         if (is_null($versionsQuery)) {
@@ -281,16 +308,14 @@ class DocumentController extends Controller
             }
         }
 
-        // Normalize: ensure array of numeric ids (unique)
         $versions = collect($versionsQuery ?? [])
             ->flatten()
-            ->map(fn($v) => is_numeric($v) ? (int)$v : null)
+            ->map(fn($v) => is_numeric($v) ? (int) $v : null)
             ->filter()
             ->unique()
             ->values()
             ->all();
 
-        // If no selections, fallback to two latest versions
         if (count($versions) < 2) {
             $latest = $doc->versions()->orderByDesc('id')->take(2)->get();
             if ($latest->count() < 2) {
@@ -316,7 +341,6 @@ class DocumentController extends Controller
         $text2 = $ver2->plain_text ?: ($ver2->pasted_text ?: '(Tidak ada teks)');
 
         $diff = $this->buildDiff($text1, $text2);
-
         $selectedVersions = $versions;
 
         return view('documents.compare', compact('doc', 'ver1', 'ver2', 'diff', 'selectedVersions'));
@@ -327,102 +351,98 @@ class DocumentController extends Controller
      */
     public function chooseCompare($versionId)
     {
-        $version = DocumentVersion::with('document')->findOrFail($versionId);
+        $version  = DocumentVersion::with('document')->findOrFail($versionId);
         $document = $version->document;
 
-        // show prior approved/current versions for same document
         $candidates = $document->versions()
-            ->where('status','approved')
+            ->where('status', 'approved')
             ->orderByDesc('id')
             ->get();
 
-        return view('versions.choose_compare', compact('version','document','candidates'));
+        return view('versions.choose_compare', compact('version', 'document', 'candidates'));
     }
 
     /**
      * Approve a version (MR/Director).
-     * MR moves to DIR (pending), Director approves to current.
      */
     public function approveVersion(Request $request, DocumentVersion $version)
     {
         $user = $request->user();
-        if (! $user) abort(403);
+        if (! $user) {
+            abort(403);
+        }
 
-        // MR action: forward to Director
         if (method_exists($user, 'hasAnyRole') && $user->hasAnyRole(['mr'])) {
             $version->update([
-                'status' => 'submitted', // keep 'submitted' as in-progress to director
+                'status'         => 'submitted',
                 'approval_stage' => 'DIR',
-                'submitted_by' => $user->id,
-                'submitted_at' => now(),
+                'submitted_by'   => $user->id,
+                'submitted_at'   => now(),
             ]);
 
             return back()->with('success', 'Version forwarded to Director.');
         }
 
-        // Director action: final approve -> becomes current_version
-        if (method_exists($user, 'hasAnyRole') && $user->hasAnyRole(['director','admin'])) {
-            DB::transaction(function() use ($version, $user) {
-                // mark version approved
+        if (method_exists($user, 'hasAnyRole') && $user->hasAnyRole(['director', 'admin'])) {
+            DB::transaction(function () use ($version, $user) {
                 $version->update([
-                    'status' => 'approved',
+                    'status'         => 'approved',
                     'approval_stage' => 'DONE',
-                    'approved_by' => $user->id,
-                    'approved_at' => now(),
+                    'approved_by'    => $user->id,
+                    'approved_at'    => now(),
                 ]);
 
-                // update document current version fields
                 $doc = $version->document;
                 $doc->update([
                     'current_version_id' => $version->id,
-                    'revision_number' => $this->incRevision($doc->revision_number),
-                    'revision_date' => now(),
-                    'approved_by' => $user->id,
-                    'approved_at' => now(),
+                    'revision_number'    => $this->incRevision($doc->revision_number),
+                    'revision_date'      => now(),
+                    'approved_by'        => $user->id,
+                    'approved_at'        => now(),
                 ]);
             });
 
-            return back()->with('success','Version approved and promoted to current.');
+            return back()->with('success', 'Version approved and promoted to current.');
         }
 
-        return back()->with('error','You are not authorized to approve.');
+        return back()->with('error', 'You are not authorized to approve.');
     }
 
     /**
-     * Reject a version (MR/Director) — stores reason and returns to draft/Kabag.
+     * Reject a version (MR/Director).
      */
     public function rejectVersion(Request $request, DocumentVersion $version)
     {
-        $request->validate(['rejected_reason'=>'required|string|max:2000']);
+        $request->validate(['rejected_reason' => 'required|string|max:2000']);
         $user = $request->user();
-        if (! $user) abort(403);
-
-        if (method_exists($user, 'hasAnyRole') && ! $user->hasAnyRole(['mr','director','admin'])) {
+        if (! $user) {
             abort(403);
         }
 
-        // return to kabag (draft) with reason
+        if (method_exists($user, 'hasAnyRole') && ! $user->hasAnyRole(['mr', 'director', 'admin'])) {
+            abort(403);
+        }
+
         $version->update([
-            'status' => 'rejected',
-            'approval_stage' => 'KABAG',
-            'rejected_by' => $user->id,
-            'rejected_at' => now(),
+            'status'          => 'rejected',
+            'approval_stage'  => 'KABAG',
+            'rejected_by'     => $user->id,
+            'rejected_at'     => now(),
             'rejected_reason' => $request->input('rejected_reason'),
         ]);
 
-        // optional audit
         if (class_exists(\App\Models\AuditLog::class)) {
             \App\Models\AuditLog::create([
-                'event' => 'reject_version',
-                'user_id' => $user->id,
-                'document_id' => $version->document_id,
+                'event'               => 'reject_version',
+                'user_id'             => $user->id,
+                'document_id'         => $version->document_id,
                 'document_version_id' => $version->id,
-                'detail' => json_encode(['reason' => $request->input('rejected_reason')]),
-                'ip' => $request->ip(),
+                'detail'              => json_encode(['reason' => $request->input('rejected_reason')]),
+                'ip'                  => $request->ip(),
             ]);
         }
 
-        return back()->with('success','Version rejected and returned to draft.');
+        return back()->with('success', 'Version rejected and returned to draft.');
     }
 
     /**
@@ -431,41 +451,97 @@ class DocumentController extends Controller
     public function show(Document $document)
     {
         $document->load(['department', 'versions.creator' => fn ($q) => $q->orderByDesc('id')]);
+
         $versions = $document->versions->sortByDesc('id')->values();
         $version  = $versions->first();
 
+        // --- build related links array terstruktur untuk sidebar ---
+        $relatedLinks = [];
+        $rawLinks     = null;
+
+        if (isset($document->related_links)) {
+            $raw = $document->related_links;
+
+            if (is_array($raw)) {
+                $rawLinks = $raw;
+            } elseif (is_string($raw)) {
+                $decoded = json_decode($raw, true);
+                if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
+                    $rawLinks = $decoded;
+                } elseif (trim($raw) !== '') {
+                    // single URL string lama
+                    $rawLinks = [$raw];
+                }
+            }
+        }
+
+        if (!empty($rawLinks) && is_array($rawLinks)) {
+            foreach ($rawLinks as $url) {
+                if (!is_string($url) || trim($url) === '') {
+                    continue;
+                }
+
+                $url   = trim($url);
+                $label = $url;
+                $docId = null;
+
+                // coba deteksi /documents/{id}
+                if (preg_match('#/documents/(\d+)#', $url, $m)) {
+                    $docId = (int) $m[1];
+                    $docRef = Document::find($docId);
+                    if ($docRef) {
+                        $code  = $docRef->doc_code ?: '';
+                        $title = $docRef->title ?: '';
+                        $label = trim(($code ? $code.' — ' : '').$title) ?: $url;
+                    } else {
+                        // kalau dokumen nggak ketemu, tetap pakai URL apa adanya
+                        $label = $url;
+                        $docId = null;
+                    }
+                } else {
+                    // eksternal URL: singkatkan tampilan
+                    $short = preg_replace('#^https?://#i', '', $url);
+                    $label = strlen($short) > 48 ? substr($short, 0, 45).'...' : $short;
+                }
+
+                $relatedLinks[] = [
+                    'url'    => $url,
+                    'label'  => $label,
+                    'doc_id' => $docId,
+                ];
+            }
+        }
+
         return view('documents.show', [
-            'document' => $document,
-            'versions' => $versions,
-            'version'  => $version,
-            'doc'      => $document,
+            'document'     => $document,
+            'versions'     => $versions,
+            'version'      => $version,
+            'doc'          => $document,
+            'relatedLinks' => $relatedLinks,
         ]);
     }
 
     /**
      * Update metadata dokumen + buat/update versi terbaru.
-     * Prevent duplicate drafts by same uploader for same document.
-     *
-     * - save = keep draft in Draft container (overwrite existing draft from same uploader)
-     * - submit = move to MR queue (blocked if other submitted/pending exists)
      */
     public function updateCombined(Request $request, Document $document)
     {
         $validated = $request->validate([
-            'doc_code'       => ['required','string','max:80', Rule::unique('documents','doc_code')->ignore($document->id)],
-            'title'          => 'required|string|max:255',
-            'department_id'  => 'required|integer|exists:departments,id',
-            'version_id'     => 'nullable|integer|exists:document_versions,id',
-            'version_label'  => 'required|string|max:50',
-            'file'           => 'nullable|file|mimes:pdf,doc,docx|max:51200',
-            'pasted_text'    => 'nullable|string|max:800000',
-            'change_note'    => 'nullable|string|max:2000',
-            'signed_by'      => 'nullable|string|max:191',
-            'signed_at'      => 'nullable|date',
-            'submit_for'     => 'nullable|in:save,submit',
+            'doc_code'      => ['required', 'string', 'max:80', Rule::unique('documents', 'doc_code')->ignore($document->id)],
+            'title'         => 'required|string|max:255',
+            'department_id' => 'required|integer|exists:departments,id',
+            'category_id'   => 'nullable|integer|exists:categories,id',
+            'version_id'    => 'nullable|integer|exists:document_versions,id',
+            'version_label' => 'required|string|max:50',
+            'file'          => 'nullable|file|mimes:pdf,doc,docx|max:51200',
+            'pasted_text'   => 'nullable|string|max:800000',
+            'change_note'   => 'nullable|string|max:2000',
+            'signed_by'     => 'nullable|string|max:191',
+            'signed_at'     => 'nullable|date',
+            'submit_for'    => 'nullable|in:save,submit',
+            'related_links' => 'nullable|string',
         ]);
 
-        // update document metadata
         $document->update([
             'doc_code'      => $validated['doc_code'],
             'title'         => $validated['title'],
@@ -473,16 +549,22 @@ class DocumentController extends Controller
             'category_id'   => $validated['category_id'] ?? $document->category_id,
         ]);
 
+        if ($request->has('related_links')) {
+            $raw   = $request->input('related_links', '');
+            $links = $this->parseRelatedLinksInput($raw);
+            $document->related_links = $links;
+            $document->save();
+        }
+
         $user = $request->user();
         $disk = Storage::disk('documents');
 
-        // find existing draft by this uploader (or specific version if provided)
         $version = null;
 
         if (!empty($validated['version_id'])) {
             $version = DocumentVersion::where('document_id', $document->id)
-                        ->where('id', $validated['version_id'])
-                        ->first();
+                ->where('id', $validated['version_id'])
+                ->first();
         }
 
         if (! $version) {
@@ -494,26 +576,24 @@ class DocumentController extends Controller
                 ->first();
         }
 
-        // When creating new draft, block creating+submitting if there's already a submitted/pending version
         if (! $version) {
             if (($validated['submit_for'] ?? 'save') === 'submit') {
                 $pending = DocumentVersion::where('document_id', $document->id)
-                    ->whereIn('status', ['submitted','pending'])
+                    ->whereIn('status', ['submitted', 'pending'])
                     ->exists();
                 if ($pending) {
                     return redirect()->route('documents.show', $document->id)
-                        ->with('error','Submission blocked: another version already pending.');
+                        ->with('error', 'Tidak dapat mengajukan sekarang. Terdapat revisi lain dalam antrian. Silakan cek halaman Draft atau Approval Queue untuk melihat status atau batalkan pengajuan sebelumnya.');
                 }
             }
 
-            $version = new DocumentVersion();
-            $version->document_id    = $document->id;
-            $version->created_by     = $user->id;
-            $version->status         = 'draft';
-            $version->approval_stage = 'KABAG';
+            $version                  = new DocumentVersion();
+            $version->document_id     = $document->id;
+            $version->created_by      = $user->id;
+            $version->status          = 'draft';
+            $version->approval_stage  = 'KABAG';
         }
 
-        // file handling
         $file_path = $version->file_path ?? null;
         $file_mime = $version->file_mime ?? null;
         $checksum  = $version->checksum  ?? null;
@@ -525,9 +605,9 @@ class DocumentController extends Controller
 
             $file     = $request->file('file');
             $safeName = $this->safeFilename($file->getClientOriginalName());
-            $filename = now()->timestamp.'_'.Str::random(6).'_'.$safeName;
-            $folder   = $document->doc_code.'/'.$validated['version_label'];
-            $file_path = $folder.'/'.$filename;
+            $filename = now()->timestamp . '_' . Str::random(6) . '_' . $safeName;
+            $folder   = $document->doc_code . '/' . $validated['version_label'];
+            $file_path = $folder . '/' . $filename;
 
             $content   = file_get_contents($file->getRealPath());
             $disk->put($file_path, $content);
@@ -535,35 +615,33 @@ class DocumentController extends Controller
             $checksum  = hash('sha256', $content);
         }
 
-        // update version record fields
         $version->version_label = $validated['version_label'];
         $version->file_path     = $file_path;
         $version->file_mime     = $file_mime;
         $version->checksum      = $checksum;
         $version->change_note   = $validated['change_note'] ?? null;
         $version->signed_by     = $validated['signed_by']   ?? null;
-        $version->signed_at     = !empty($validated['signed_at']) ? Carbon::parse($validated['signed_at']) : null;
+        $version->signed_at     = ! empty($validated['signed_at'])
+            ? Carbon::parse($validated['signed_at'])
+            : null;
 
         if ($request->filled('pasted_text')) {
-            $clean = $this->normalizeText($request->input('pasted_text'));
-            $version->plain_text  = $clean;
+            $clean               = $this->normalizeText($request->input('pasted_text'));
+            $version->plain_text = $clean;
             $version->pasted_text = $clean;
         }
 
         $version->save();
-
         Cache::forget('dashboard.payload');
 
-        // process submit action
         if (($validated['submit_for'] ?? 'save') === 'submit') {
-
             $pending = DocumentVersion::where('document_id', $document->id)
-                ->whereIn('status',['submitted','pending'])
+                ->whereIn('status', ['submitted', 'pending'])
                 ->exists();
 
             if ($pending) {
                 return redirect()->route('documents.show', $document->id)
-                    ->with('error','Submission blocked: another version already pending.');
+                    ->with('error', 'Submission blocked: another version already pending.');
             }
 
             $version->update([
@@ -598,21 +676,21 @@ class DocumentController extends Controller
 
     /**
      * BUAT DOKUMEN BARU + BASELINE V1 APPROVED.
-     * (Admin-only baseline uploader)
      */
     public function store(Request $request)
     {
         $user = $request->user();
 
         $data = $request->validate([
-            'doc_code'       => 'required|string|max:120|unique:documents,doc_code',
-            'title'          => 'required|string|max:255',
-            'category_id'    => 'required|integer|exists:categories,id',
-            'department_id'  => 'required|integer|exists:departments,id',
-            'file'           => 'nullable|file|mimes:pdf,doc,docx|max:51200',
-            'pasted_text'    => 'nullable|string',
-            'version_label'  => 'nullable|string|max:50',
-            'change_note'    => 'nullable|string|max:2000',
+            'doc_code'      => 'required|string|max:120|unique:documents,doc_code',
+            'title'         => 'required|string|max:255',
+            'category_id'   => 'required|integer|exists:categories,id',
+            'department_id' => 'required|integer|exists:departments,id',
+            'file'          => 'nullable|file|mimes:pdf,doc,docx|max:51200',
+            'pasted_text'   => 'nullable|string',
+            'version_label' => 'nullable|string|max:50',
+            'change_note'   => 'nullable|string|max:2000',
+            'related_links' => 'nullable|string',
         ]);
 
         $document = Document::create([
@@ -621,6 +699,13 @@ class DocumentController extends Controller
             'department_id' => $data['department_id'],
             'category_id'   => $data['category_id'],
         ]);
+
+        if ($request->has('related_links')) {
+            $raw   = $request->input('related_links', '');
+            $links = $this->parseRelatedLinksInput($raw);
+            $document->related_links = $links;
+            $document->save();
+        }
 
         $disk = Storage::disk('documents');
 
@@ -631,9 +716,9 @@ class DocumentController extends Controller
         if ($request->hasFile('file')) {
             $file     = $request->file('file');
             $safeName = $this->safeFilename($file->getClientOriginalName());
-            $filename = time().'_'.$safeName;
-            $folder   = $document->doc_code.'/v1';
-            $file_path = $folder.'/'.$filename;
+            $filename = time() . '_' . $safeName;
+            $folder   = $document->doc_code . '/v1';
+            $file_path = $folder . '/' . $filename;
 
             $content   = file_get_contents($file->getRealPath());
             $disk->put($file_path, $content);
@@ -664,7 +749,7 @@ class DocumentController extends Controller
 
         return redirect()
             ->route('documents.show', $document->id)
-            ->with('success','Baseline uploaded.');
+            ->with('success', 'Baseline uploaded.');
     }
 
     /* =========================
@@ -685,10 +770,23 @@ class DocumentController extends Controller
         }
     }
 
+    protected function parseRelatedLinksInput(?string $raw): array
+    {
+        if (empty($raw)) {
+            return [];
+        }
+
+        $lines = preg_split('/\r\n|\r|\n/', $raw);
+        $lines = array_map('trim', $lines);
+        $lines = array_filter($lines, fn($l) => ! empty($l));
+
+        return array_values($lines);
+    }
+
     protected function extractDocxText(string $binary): ?string
     {
         try {
-            $tmp = sys_get_temp_dir().DIRECTORY_SEPARATOR.'docx_'.uniqid().'.docx';
+            $tmp = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'docx_' . uniqid() . '.docx';
             file_put_contents($tmp, $binary);
 
             $zip  = new \ZipArchive();
@@ -716,7 +814,7 @@ class DocumentController extends Controller
     {
         try {
             $extractor = app()->make(\App\Console\Commands\ExtractDocumentTextCommand::class);
-            $text = $extractor->extractTextForVersion($version, env('PDFTOTEXT_PATH', 'pdftotext'));
+            $text      = $extractor->extractTextForVersion($version, env('PDFTOTEXT_PATH', 'pdftotext'));
             return $text ? $this->normalizeText($text) : null;
         } catch (\Throwable) {
             return null;
@@ -754,29 +852,32 @@ class DocumentController extends Controller
     protected function normalizeText(string $text): string
     {
         $text = str_replace(["\r\n", "\r"], "\n", $text);
-        // remove control characters except newline/tab
-        $text = preg_replace('/[^\PC\n\t]/u', ' ', $text);
-        $text = preg_replace('/[ \t]{2,}/', ' ', $text);
-        $text = preg_replace("/\n{3,}/", "\n\n", $text);
+        $text = preg_replace('/[^\PC\n\t]/u', ' ', $text);        // control chars
+        $text = preg_replace('/[ \t]{2,}/', ' ', $text);          // multi spaces
+        $text = preg_replace("/\n{3,}/", "\n\n", $text);          // multi blank lines
         return trim($text);
     }
 
     protected function safeFilename(string $original): string
     {
         $name = preg_replace('/[^\w\.\-]+/u', '_', $original);
-        return $name ?: ('file_'.Str::random(8));
+        return $name ?: ('file_' . Str::random(8));
     }
 
     protected function cleanString(?string $s): ?string
     {
-        if ($s === null) return null;
+        if ($s === null) {
+            return null;
+        }
         $s = preg_replace('/\x{FEFF}|\p{C}/u', '', $s);
         return trim($s);
     }
 
     protected function parseDateString(?string $s): ?\Carbon\Carbon
     {
-        if (empty($s)) return null;
+        if (empty($s)) {
+            return null;
+        }
         try {
             return Carbon::parse($s);
         } catch (\Throwable $e) {
@@ -784,12 +885,11 @@ class DocumentController extends Controller
         }
     }
 
-    /**
-     * Increment revision helper (keamanan jika null atau non-int)
-     */
     protected function incRevision($rev)
     {
-        if (is_numeric($rev)) return (int)$rev + 1;
+        if (is_numeric($rev)) {
+            return (int) $rev + 1;
+        }
         return 1;
     }
 }

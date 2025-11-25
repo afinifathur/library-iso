@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use InvalidArgumentException;
 
 class Document extends Model
@@ -14,13 +15,20 @@ class Document extends Model
 
     protected $fillable = [
         'doc_code',
-        'category',        // IK, UT, FR, ...
+        'category',            // IK, UT, FR, ...
         'title',
         'description',
         'department_id',
+        'category_id',
         'revision_number',
         'revision_date',
-        'doc_number',      // nomor urut dokumen (integer)
+        'doc_number',          // nomor urut dokumen (disimpan varchar di DB, dipakai sebagai angka)
+        'short_code',
+        'current_version_id',
+        'rejected_reason',
+        'approved_by',
+        'approved_at',
+        'related_links',       // <== tambahan: JSON array link terkait
     ];
 
     /**
@@ -29,10 +37,17 @@ class Document extends Model
      * @var array
      */
     protected $casts = [
-        'created_at'    => 'datetime',
-        'updated_at'    => 'datetime',
-        'revision_date' => 'datetime',
-        'doc_number'    => 'integer',
+        'created_at'          => 'datetime',
+        'updated_at'          => 'datetime',
+        'revision_date'       => 'datetime',
+        'approved_at'         => 'datetime',
+        'doc_number'          => 'integer',
+        'revision_number'     => 'integer',
+        'department_id'       => 'integer',
+        'category_id'         => 'integer',
+        'approved_by'         => 'integer',
+        'current_version_id'  => 'integer',
+        'related_links'       => 'array',   // <== otomatis cast ke array
     ];
 
     /* -------------------------
@@ -41,8 +56,6 @@ class Document extends Model
 
     /**
      * Relasi ke Department.
-     *
-     * @return BelongsTo
      */
     public function department(): BelongsTo
     {
@@ -52,18 +65,16 @@ class Document extends Model
     /**
      * Relasi ke Category (jika ada model Category terpisah).
      *
-     * @return BelongsTo|null
+     *gunakan nama method lain (categoryRelation) agar tidak bentrok
+     * dengan kolom 'category' di tabel.
      */
-    public function categoryRelation(): ?BelongsTo
+    public function categoryRelation(): BelongsTo
     {
-        // gunakan nama method lain (categoryRelation) agar tidak bentrok dengan kolom 'category'
         return $this->belongsTo(Category::class, 'category', 'code');
     }
 
     /**
      * Semua versi dokumen.
-     *
-     * @return HasMany
      */
     public function versions(): HasMany
     {
@@ -72,10 +83,8 @@ class Document extends Model
 
     /**
      * Versi terbaru (latest).
-     *
-     * @return \Illuminate\Database\Eloquent\Relations\HasOne
      */
-    public function currentVersion()
+    public function currentVersion(): HasOne
     {
         return $this->hasOne(DocumentVersion::class)->latestOfMany();
     }
@@ -101,7 +110,7 @@ class Document extends Model
 
         // pastikan department ada
         $dept = Department::query()->where('code', $deptCode)->first();
-        if (!$dept) {
+        if (! $dept) {
             throw new InvalidArgumentException("Department dengan code '{$deptCode}' tidak ditemukan.");
         }
 
@@ -138,19 +147,23 @@ class Document extends Model
     {
         static::creating(function (Document $doc) {
             // jika doc_code belum ada namun category & department_id tersedia
-            if (empty($doc->doc_code) && !empty($doc->category) && !empty($doc->department_id)) {
+            if (empty($doc->doc_code) && ! empty($doc->category) && ! empty($doc->department_id)) {
                 $dept = Department::find($doc->department_id);
 
                 if ($dept) {
                     try {
                         $doc->doc_code = static::generateDocCode($doc->category, $dept->code);
                     } catch (InvalidArgumentException $e) {
-                        // jika department code invalid, biarkan fail secara tenang (caller bisa menangani)
-                        // tidak meng-throw agar operasi create tidak crash unexpectedly
+                        // kalau department code invalid, biarkan saja
+                        // bisa ditangani di layer lain kalau perlu
                     }
 
                     // set doc_number jika belum ada (ambil dari tail number doc_code)
-                    if (empty($doc->doc_number) && !empty($doc->doc_code) && preg_match('/(\d{1,})$/', $doc->doc_code, $m)) {
+                    if (
+                        empty($doc->doc_number)
+                        && ! empty($doc->doc_code)
+                        && preg_match('/(\d{1,})$/', $doc->doc_code, $m)
+                    ) {
                         $doc->doc_number = (int) $m[1];
                     }
                 }
