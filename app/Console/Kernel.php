@@ -18,6 +18,9 @@ class Kernel extends ConsoleKernel
         \App\Console\Commands\ImportDocumentsCommand::class,
         \App\Console\Commands\PopulateShortCodeCommand::class,
          \App\Console\Commands\CleanOldDrafts::class,
+          \App\Console\Commands\ImportDocsFromImportsFolder::class,
+          \App\Console\Commands\ExtractMissingText::class,
+          
     ];
 
     protected function schedule(Schedule $schedule)
