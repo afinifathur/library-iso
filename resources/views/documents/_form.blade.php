@@ -77,7 +77,7 @@
 
     {{-- RELATED LINKS --}}
     <div class="form-row">
-        <label class="small-muted">Dokumen terkait (satu URL per baris)</label>
+        <label class="small-muted">Dokumen terkait (lampiran, form dll) (satu URL per baris)</label>
 
         @php
             // default value untuk edit: implode array related_links jadi multiline string
@@ -191,23 +191,25 @@
     <input type="hidden" name="approved_by" value="{{ old('approved_by', $document->approved_by ?? '') }}">
 
     {{-- BUTTONS --}}
-    <div class="form-row" style="display:flex; gap:8px; align-items:center;">
-        <button class="btn btn-primary"
-                type="submit"
-                name="submit_for"
-                value="save">
-            {{ $submitLabel ?? 'Save Draft' }}
-        </button>
+    <div style="margin-top:16px; display:flex; gap:10px;">
 
-        @isset($showDraftLink)
-            @if($showDraftLink)
-                <a href="{{ route('drafts.index') }}" class="btn btn-muted">Open Drafts</a>
-            @endif
-        @else
-            {{-- default: tampilkan link drafts --}}
-            <a href="{{ route('drafts.index') }}" class="btn btn-muted">Open Drafts</a>
-        @endisset
+    {{-- PUBLISH BUTTON (default for New Document) --}}
+    <button class="btn btn-primary"
+            id="publish-btn"
+            type="submit"
+            name="submit_for"
+            value="publish">
+        Save Baseline (v1) & Publish
+    </button>
 
-        <a href="{{ route('documents.index') }}" class="btn-muted">Cancel</a>
-    </div>
+    {{-- DRAFT BUTTON (only appears when selecting "Replace Version") --}}
+    <button class="btn btn-warning"
+            id="draft-btn"
+            type="submit"
+            name="submit_for"
+            value="draft">
+        Save as Draft (New Version)
+    </button>
+
+</div>
 </form>

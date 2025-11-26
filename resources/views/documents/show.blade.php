@@ -30,6 +30,26 @@
     if (!isset($relatedLinks) || !is_array($relatedLinks)) {
         $relatedLinks = [];
     }
+
+    // cek hak delete (trash) untuk tombol Recycle Bin (mr/director/admin)
+    $canTrash = false;
+    if ($user) {
+        if (method_exists($user, 'hasAnyRole') && $user->hasAnyRole(['mr','director','admin'])) {
+            $canTrash = true;
+        } else {
+            // fallback: if roles relation exists
+            try {
+                if (method_exists($user, 'roles') && is_callable([$user, 'roles'])) {
+                    $roles = (array) optional($user->roles()->pluck('name'))->toArray();
+                    if (count(array_intersect($roles, ['mr','director','admin'])) > 0) {
+                        $canTrash = true;
+                    }
+                }
+            } catch (\Throwable $e) {
+                // ignore
+            }
+        }
+    }
 @endphp
 
 <div class="app-container" style="max-width:1200px;margin:18px auto;">
@@ -48,24 +68,40 @@
       </div>
 
       {{-- Action bar --}}
-      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;">
+      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;align-items:center;">
+        {{-- Edit opens modal --}}
         <button class="btn" id="btnEditDoc" type="button">✏️ Edit</button>
 
+        {{-- Download current version --}}
         @if($currentVersion && $currentVersion->file_path)
           <a class="btn" href="{{ route('documents.versions.download', $currentVersion->id) }}">Download PDF</a>
         @else
           <button class="btn-muted" type="button" disabled>Download PDF</button>
         @endif
 
+        {{-- Compare --}}
         @if(Route::has('documents.compare'))
           <a class="btn-muted" href="{{ route('documents.compare', $document->id ?? 0) }}">Compare</a>
         @endif
 
         {{-- Submit for Approval (Kabag) --}}
         @if($canShowSubmit && ! $isFinal)
-          <form method="POST" action="{{ route('versions.submit', $submitVersionId) }}" style="display:inline;">
+          <form method="POST" action="{{ route('versions.submit', $submitVersionId) }}" style="display:inline;margin-left:6px;">
             @csrf
             <button type="submit" class="btn btn-primary">Submit for Approval</button>
+          </form>
+        @endif
+
+        {{-- Delete -> move to Recycle Bin (only for roles allowed) --}}
+        @if($canTrash && $currentVersion)
+          <form method="POST"
+                action="{{ route('versions.trash', $currentVersion->id) }}"
+                style="display:inline;margin-left:6px;"
+                onsubmit="return confirm('Move this version to Recycle Bin?');">
+            @csrf
+            <button type="submit" class="btn" style="background:#ef4444;color:#fff;border:none;border-radius:8px;padding:.45rem .75rem;">
+              Delete
+            </button>
           </form>
         @endif
       </div>
@@ -73,7 +109,10 @@
       {{-- Version content --}}
       <div style="background:#fff;border:1px solid #eef3f8;border-radius:8px;padding:18px;min-height:300px;">
         @if($currentVersion && ($currentVersion->pasted_text || $currentVersion->plain_text))
-          <pre style="white-space:pre-wrap;font-family:inherit;">{!! nl2br(e($currentVersion->pasted_text ?? $currentVersion->plain_text)) !!}</pre>
+          {{-- show text (preserve line breaks). Use nl2br(e(...)) wrapped with {!! !!} --}}
+          <pre style="white-space:pre-wrap;font-family:inherit;border:0;background:transparent;padding:0;margin:0;">
+            {!! nl2br(e($currentVersion->pasted_text ?? $currentVersion->plain_text)) !!}
+          </pre>
         @elseif($currentVersion && $currentVersion->file_path)
           <div>
             File attached.
@@ -108,7 +147,11 @@
                   @if(Route::has('versions.show'))
                     <a class="btn-small" href="{{ route('versions.show', $v->id) }}">Open</a>
                   @endif
-                  <a class="btn-small btn-muted" href="{{ route('documents.versions.download', $v->id) }}">DL</a>
+                  @if($v->file_path)
+                    <a class="btn-small btn-muted" href="{{ route('documents.versions.download', $v->id) }}">DL</a>
+                  @else
+                    <span class="btn-small btn-muted" style="opacity:.6;">No file</span>
+                  @endif
                 </div>
               </div>
             </li>
@@ -295,7 +338,7 @@
         <input id="signed_at"
                type="date"
                name="signed_at"
-               value="{{ old('signed_at', optional($currentVersion->signed_at ?? null)->format('Y-m-d') ?? '') }}"
+               value="{{ old('signed_at', optional($currentVersion->signed_at ?? null) ? optional($currentVersion->signed_at)->format('Y-m-d') : '') }}"
                class="input">
 
         <div style="margin-top:10px;display:flex;gap:8px;">
@@ -335,6 +378,11 @@
     border:1px solid #e6eef8;
     margin-top:6px;
   }
+  /* simple utilities */
+  .small-muted{ color:#6b7280; font-size:.95rem; }
+  .btn{ display:inline-block; padding:.45rem .75rem; border-radius:6px; background:#eef7ff; color:#0b63d4; border:1px solid #dbeefd; text-decoration:none; }
+  .btn-muted{ display:inline-block; padding:.45rem .75rem; border-radius:6px; background:#f3f4f6; color:#6b7280; border:1px solid #e6eef8; text-decoration:none; }
+  .btn-primary{ background:#0b5ed7; color:#fff; border:1px solid #0b5ed7; }
 </style>
 
 <script>

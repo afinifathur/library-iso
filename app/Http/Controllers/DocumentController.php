@@ -675,13 +675,140 @@ class DocumentController extends Controller
     }
 
     /**
+     * Mark version as trashed (non-destructive).
+     *
+     * Route: POST versions/{version}/trash
+     */
+    public function trashVersion(Request $request, DocumentVersion $version)
+    {
+        $user = $request->user();
+        if (! $user) {
+            abort(403);
+        }
+
+        // only allow MR, director, admin to trash (adjust roles as desired)
+        if (method_exists($user, 'hasAnyRole') && ! $user->hasAnyRole(['mr','director','admin'])) {
+            abort(403, 'Unauthorized to trash versions.');
+        }
+
+        $oldStatus = $version->status ?? null;
+
+        // Mark as trashed (non-destructive). Controller expects these fields exist.
+        $version->update([
+            'status'         => 'trashed',
+            'approval_stage' => null,
+        ]);
+
+        // optional audit log
+        if (class_exists(\App\Models\AuditLog::class)) {
+            \App\Models\AuditLog::create([
+                'event'               => 'trash_version',
+                'user_id'             => $user->id,
+                'document_id'         => $version->document_id,
+                'document_version_id' => $version->id,
+                'detail'              => json_encode(['from' => $oldStatus]),
+                'ip'                  => $request->ip(),
+            ]);
+        }
+
+        return back()->with('success', 'Version moved to Recycle Bin.');
+    }
+
+    /**
      * BUAT DOKUMEN BARU + BASELINE V1 APPROVED.
+     *
+     * This method now supports:
+     * - mode = 'new' (create document). submit_for = 'publish'|'draft'
+     * - mode = 'replace' (create draft version for existing document)
      */
     public function store(Request $request)
     {
         $user = $request->user();
 
-        $data = $request->validate([
+        if (! $user) {
+            return redirect()->route('login')->with('error', 'Login required.');
+        }
+
+        // mode: new | replace
+        $mode = $request->input('mode', 'new');
+        // submit action from buttons: publish|draft (from UI)
+        $submit = $request->input('submit_for', 'publish');
+
+        if ($mode === 'replace') {
+            // replace: must reference existing document via doc_code (or document_id)
+            $validated = $request->validate([
+                'doc_code'      => ['required','string','exists:documents,doc_code'],
+                'version_label' => ['nullable','string','max:50'],
+                'file'          => 'nullable|file|mimes:pdf,doc,docx|max:51200',
+                'pasted_text'   => 'nullable|string',
+                'change_note'   => 'nullable|string|max:2000',
+                'related_links' => 'nullable|string',
+            ]);
+
+            // find document
+            $document = Document::where('doc_code', $validated['doc_code'])->first();
+
+            if (! $document) {
+                return back()->withInput()->with('error', 'Dokumen tidak ditemukan untuk diganti versinya.');
+            }
+
+            // store file if provided
+            $disk = Storage::disk('documents');
+            $file_path = null;
+            $file_mime = null;
+            $checksum  = null;
+
+            if ($request->hasFile('file')) {
+                $file     = $request->file('file');
+                $safeName = $this->safeFilename($file->getClientOriginalName());
+                $filename = time() . '_' . $safeName;
+                $folder   = $document->doc_code . '/' . ($validated['version_label'] ?? 'draft');
+                $file_path = $folder . '/' . $filename;
+
+                $content   = file_get_contents($file->getRealPath());
+                $disk->put($file_path, $content);
+                $file_mime = $file->getClientMimeType() ?: 'application/octet-stream';
+                $checksum  = hash('sha256', $content);
+            }
+
+            // create draft version (replace flow always creates draft)
+            $version = new DocumentVersion();
+            $version->document_id   = $document->id;
+            $version->version_label = $validated['version_label'] ?? 'vX';
+            $version->status        = 'draft';
+            $version->approval_stage= 'KABAG';
+            $version->created_by    = $user->id;
+            $version->file_path     = $file_path;
+            $version->file_mime     = $file_mime;
+            $version->checksum      = $checksum;
+            $version->change_note   = $validated['change_note'] ?? null;
+            $version->pasted_text   = $request->input('pasted_text') ?? null;
+            $version->plain_text    = $request->input('pasted_text') ?? null;
+            $version->save();
+
+            // save related links on document if provided
+            if ($request->has('related_links')) {
+                $document->related_links = $this->parseRelatedLinksInput($request->input('related_links'));
+                $document->save();
+            }
+
+            if (class_exists(\App\Models\AuditLog::class)) {
+                \App\Models\AuditLog::create([
+                    'event'               => 'create_replace_draft',
+                    'user_id'             => $user->id,
+                    'document_id'         => $document->id,
+                    'document_version_id' => $version->id,
+                    'detail'              => json_encode(['via' => 'replace_mode']),
+                    'ip'                  => $request->ip(),
+                ]);
+            }
+
+            return redirect()->route('drafts.index')
+                ->with('success', 'Draft versi baru berhasil dibuat & masuk Draft Container.');
+        }
+
+        // Default: mode === 'new'
+        $validated = $request->validate([
             'doc_code'      => 'required|string|max:120|unique:documents,doc_code',
             'title'         => 'required|string|max:255',
             'category_id'   => 'required|integer|exists:categories,id',
@@ -694,10 +821,10 @@ class DocumentController extends Controller
         ]);
 
         $document = Document::create([
-            'doc_code'      => $data['doc_code'],
-            'title'         => $data['title'],
-            'department_id' => $data['department_id'],
-            'category_id'   => $data['category_id'],
+            'doc_code'      => $validated['doc_code'],
+            'title'         => $validated['title'],
+            'department_id' => $validated['department_id'],
+            'category_id'   => $validated['category_id'],
         ]);
 
         if ($request->has('related_links')) {
@@ -726,30 +853,73 @@ class DocumentController extends Controller
             $checksum  = hash('sha256', $content);
         }
 
+        // if user chose to publish baseline immediately
+        if ($submit === 'publish') {
+            $version = DocumentVersion::create([
+                'document_id'   => $document->id,
+                'version_label' => $validated['version_label'] ?? 'v1',
+                'status'        => 'approved',
+                'approval_stage'=> 'DONE',
+                'file_path'     => $file_path,
+                'file_mime'     => $file_mime,
+                'checksum'      => $checksum,
+                'change_note'   => $validated['change_note'] ?? null,
+                'plain_text'    => $request->input('pasted_text') ?? null,
+                'created_by'    => $user->id ?? null,
+                'approved_by'   => $user->id ?? null,
+                'approved_at'   => now(),
+            ]);
+
+            $document->update([
+                'current_version_id' => $version->id,
+                'revision_number'    => 1,
+                'revision_date'      => now(),
+            ]);
+
+            if (class_exists(\App\Models\AuditLog::class)) {
+                \App\Models\AuditLog::create([
+                    'event'               => 'create_baseline_publish',
+                    'user_id'             => $user->id,
+                    'document_id'         => $document->id,
+                    'document_version_id' => $version->id,
+                    'detail'              => json_encode(['published' => true]),
+                    'ip'                  => $request->ip(),
+                ]);
+            }
+
+            return redirect()
+                ->route('documents.show', $document->id)
+                ->with('success', 'Baseline uploaded and published.');
+        }
+
+        // otherwise save as draft (publish button not used) — create draft version
         $version = DocumentVersion::create([
             'document_id'   => $document->id,
-            'version_label' => $data['version_label'] ?? 'v1',
-            'status'        => 'approved',
-            'approval_stage'=> 'DONE',
+            'version_label' => $validated['version_label'] ?? 'v1',
+            'status'        => 'draft',
+            'approval_stage'=> 'KABAG',
             'file_path'     => $file_path,
             'file_mime'     => $file_mime,
             'checksum'      => $checksum,
-            'change_note'   => $data['change_note'] ?? null,
+            'change_note'   => $validated['change_note'] ?? null,
             'plain_text'    => $request->input('pasted_text') ?? null,
             'created_by'    => $user->id ?? null,
-            'approved_by'   => $user->id ?? null,
-            'approved_at'   => now(),
         ]);
 
-        $document->update([
-            'current_version_id' => $version->id,
-            'revision_number'    => 1,
-            'revision_date'      => now(),
-        ]);
+        if (class_exists(\App\Models\AuditLog::class)) {
+            \App\Models\AuditLog::create([
+                'event'               => 'create_baseline_draft',
+                'user_id'             => $user->id,
+                'document_id'         => $document->id,
+                'document_version_id' => $version->id,
+                'detail'              => json_encode(['published' => false]),
+                'ip'                  => $request->ip(),
+            ]);
+        }
 
         return redirect()
-            ->route('documents.show', $document->id)
-            ->with('success', 'Baseline uploaded.');
+            ->route('drafts.index')
+            ->with('success', 'Baseline created as draft.');
     }
 
     /* =========================
