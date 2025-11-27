@@ -5,25 +5,45 @@
 <div class="container-narrow" style="max-width:920px;margin:18px auto;">
     <h2 style="margin-bottom:8px;">New Document (Upload Baseline)</h2>
 
-    {{-- Mode selector: New / Replace --}}
+    {{-- Keterangan singkat --}}
     <div class="form-row" style="margin-bottom:12px;">
-        <label for="mode" class="small-muted" style="display:block;margin-bottom:6px;">Jenis Pengajuan Dokumen</label>
-        <select name="mode" id="mode" class="form-input input" required style="padding:8px;border-radius:6px;border:1px solid #e6eef8;min-width:200px;">
-            <option value="new">Dokumen Baru</option>
-            <option value="replace">Ganti Versi Lama</option>
-        </select>
-        <div class="small-muted" style="margin-top:6px;">Pilih <b>Dokumen Baru</b> untuk membuat baseline v1 — pilih <b>Ganti Versi Lama</b> jika ingin mengganti versi sebuah dokumen yang sudah ada.</div>
+        <div class="small-muted" style="margin-top:6px;">
+            Pilih <b>Dokumen Baru</b> untuk membuat baseline v1 — pilih <b>Ganti Versi Lama</b> jika ingin mengganti versi sebuah dokumen yang sudah ada.
+        </div>
     </div>
 
     @php
         $action = route('documents.store');
         $method = 'POST';
-        $submitLabel = 'Save baseline (v1) & Publish';
+        $submitLabel = 'Simpan';
     @endphp
 
-    {{-- include existing form partial (keamanan: partial tidak perlu diubah) --}}
+    {{-- 
+      IMPORTANT:
+      - Partial documents._form tetap tidak diubah.
+      - Kita akan menambahkan dropdown jenis pengajuan di luar partial (sebelum form fields).
+      - Partial diasumsikan merender <form ...> dan field lain.
+    --}}
+
+    {{-- Block dropdown wajib: letakkan di create view (jangan ubah partial) --}}
+    <div class="mb-4">
+      <label for="upload_type" class="block text-sm font-medium text-gray-700">Jenis Pengajuan <span class="text-red-500">*</span></label>
+      <select id="upload_type" name="upload_type" class="mt-1 block w-full rounded border p-2" required>
+        <option value="" selected>-- silahkan pilih jenis pengajuan (wajib) --</option>
+        <option value="new">Dokumen Baru</option>
+        <option value="replace">Ganti Versi Lama</option>
+      </select>
+      <p id="uploadTypeHelp" class="mt-2 text-sm text-gray-500">
+        Pilih <strong>Dokumen Baru</strong> untuk membuat baseline v1. Pilih <strong>Ganti Versi Lama</strong> untuk membuat versi baru sebagai draft.
+      </p>
+    </div>
+
+    {{-- include existing form partial (partial tidak diubah) --}}
     @include('documents._form', compact('action','method','departments','categories','submitLabel'))
 
+    {{-- NOTE: partial harus merender sebuah <form>. Jika partial tidak merender form,
+              maka kamu harus memasukkan <form id="uploadForm" enctype="multipart/form-data" action="..." method="POST"> ...</form>
+              sendiri di sini. --}}
 </div>
 @endsection
 
@@ -31,135 +51,126 @@
 @parent
 <script>
 document.addEventListener('DOMContentLoaded', function () {
-    const modeSelect = document.getElementById('mode');
-
-    // Find the form rendered by documents._form (assume only one form on page)
+    const uploadType = document.getElementById('upload_type');
     const form = document.querySelector('form[action="{{ $action }}"]') || document.querySelector('form');
 
-    // Helper to create a button
-    function createButton(id, text, name, value, classes) {
-        const btn = document.createElement('button');
-        btn.type = 'submit';
-        btn.id = id;
-        btn.name = name;
-        btn.value = value;
-        btn.textContent = text;
-        btn.className = classes || 'btn';
-        btn.style.marginRight = '8px';
-        return btn;
-    }
-
-    // Ensure we have publish & draft buttons inside the form.
-    let publishBtn = form ? form.querySelector('#publish-btn') : null;
-    let draftBtn   = form ? form.querySelector('#draft-btn')   : null;
-
     if (!form) {
-        // no form found — nothing to wire
-        console.warn('Create view: form not found for documents._form include.');
+        console.warn('Form not found — pastikan documents._form merender <form>.');
         return;
     }
 
-    // Try to find existing submit buttons by name/value (common pattern)
-    if (!publishBtn) {
-        const btn = form.querySelector('button[type="submit"][value="submit"], button[name="submit_for"][value="submit"]');
-        if (btn) publishBtn = btn;
-    }
-    if (!draftBtn) {
-        const btn = form.querySelector('button[type="submit"][value="save"], button[name="submit_for"][value="save"]');
-        if (btn) draftBtn = btn;
+    // Pastikan form punya id & enctype
+    form.id = form.id || 'uploadForm';
+    if (!form.enctype || form.enctype.toLowerCase() !== 'multipart/form-data') {
+        form.enctype = 'multipart/form-data';
     }
 
-    // If still missing, try to find any submit button and clone it for the other role
-    // Otherwise create fallback buttons.
-    if (!publishBtn && !draftBtn) {
-        // create both fallback buttons and append to form
-        publishBtn = createButton('publish-btn', 'Save baseline (v1) & Publish', 'submit_for', 'submit', 'btn btn-primary');
-        draftBtn   = createButton('draft-btn',   'Save Draft',                 'submit_for', 'save',   'btn btn-muted');
-        const wrapper = document.createElement('div');
-        wrapper.style.marginTop = '12px';
-        wrapper.appendChild(publishBtn);
-        wrapper.appendChild(draftBtn);
-        form.appendChild(wrapper);
-    } else {
-        // ensure publishBtn has id publish-btn
-        if (publishBtn && !publishBtn.id) publishBtn.id = 'publish-btn';
-        if (draftBtn && !draftBtn.id) draftBtn.id = 'draft-btn';
+    // Sembunyikan tombol submit existing (biasanya ada dua)
+    const existingSubmitButtons = form.querySelectorAll('button[type="submit"], input[type="submit"]');
+    existingSubmitButtons.forEach(btn => {
+        btn.style.display = 'none';
+        btn.disabled = true;
+    });
 
-        // If one exists but the other doesn't, create the missing one
-        if (!publishBtn) {
-            publishBtn = createButton('publish-btn', 'Save baseline (v1) & Publish', 'submit_for', 'submit', 'btn btn-primary');
-            form.appendChild(publishBtn);
+    // Buat wrapper dan single submit button
+    let submitWrapper = form.querySelector('#submit-wrapper');
+    if (!submitWrapper) {
+        submitWrapper = document.createElement('div');
+        submitWrapper.id = 'submit-wrapper';
+        submitWrapper.style.marginTop = '12px';
+        form.appendChild(submitWrapper);
+    }
+
+    let submitBtn = document.getElementById('submitBtn');
+    if (!submitBtn) {
+        submitBtn = document.createElement('button');
+        submitBtn.type = 'submit';
+        submitBtn.id = 'submitBtn';
+        submitBtn.className = 'btn btn-primary';
+        submitBtn.textContent = 'Simpan';
+        submitBtn.disabled = true;
+        submitWrapper.appendChild(submitBtn);
+    }
+
+    // helper hidden inputs
+    function ensureHidden(name, val) {
+        let inp = form.querySelector('input[name="'+name+'"]');
+        if (!inp) {
+            inp = document.createElement('input');
+            inp.type = 'hidden';
+            inp.name = name;
+            form.appendChild(inp);
         }
-        if (!draftBtn) {
-            draftBtn = createButton('draft-btn', 'Save Draft', 'submit_for', 'save', 'btn btn-muted');
-            form.appendChild(draftBtn);
-        }
+        if (typeof val !== 'undefined') inp.value = val;
+        return inp;
     }
 
-    // Set initial visibility: default = 'new' -> show publish, hide draft
-    function updateButtons() {
-        if (modeSelect.value === 'new') {
-            publishBtn.style.display = 'inline-block';
-            draftBtn.style.display = 'none';
+    // inisialisasi hidden if not exists
+    ensureHidden('submit_for', 'submit');
+    ensureHidden('mode', 'new');
+
+    function updateFromType() {
+        const v = uploadType ? uploadType.value : '';
+        const note = document.getElementById('submitNote');
+
+        if (!v) {
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Simpan';
+            if (note) note.textContent = 'Pilih jenis pengajuan terlebih dahulu.';
+            return;
+        }
+        submitBtn.disabled = false;
+
+        if (v === 'new') {
+            // default: publish
+            ensureHidden('submit_for', 'submit').value = 'submit';
+            ensureHidden('mode', 'new').value = 'new';
+            submitBtn.textContent = 'Simpan dan Publish';
+            if (note) note.textContent = 'Akan disimpan sebagai baseline (v1) dan langsung publish.';
+        } else if (v === 'replace') {
+            // saat replace -> set save (draft) supaya tidak langsung publish
+            ensureHidden('submit_for', 'save').value = 'save';
+            ensureHidden('mode', 'replace').value = 'replace';
+            submitBtn.textContent = 'Simpan sebagai Draft';
+            if (note) note.textContent = 'Akan disimpan sebagai draft dan masuk mekanisme approval.';
         } else {
-            publishBtn.style.display = 'none';
-            draftBtn.style.display = 'inline-block';
+            ensureHidden('submit_for', 'submit').value = 'submit';
+            ensureHidden('mode', v).value = v;
+            submitBtn.textContent = 'Simpan';
+            if (note) note.textContent = '';
         }
     }
 
-    // Attach change handler
-    modeSelect.addEventListener('change', updateButtons);
-
-    // Initialize
-    updateButtons();
-
-    // Optional: when mode is 'replace', we set a hidden input indicating replace mode
-    function ensureModeHidden() {
-        let hidden = form.querySelector('input[name="mode"]');
-        if (!hidden) {
-            hidden = document.createElement('input');
-            hidden.type = 'hidden';
-            hidden.name = 'mode';
-            form.appendChild(hidden);
-        }
-        hidden.value = modeSelect.value;
+    // add small note span
+    if (!document.getElementById('submitNote')) {
+        const span = document.createElement('span');
+        span.id = 'submitNote';
+        span.style.marginLeft = '12px';
+        span.style.color = '#6b7280';
+        submitWrapper.appendChild(span);
     }
 
-    // Keep hidden input updated
-    modeSelect.addEventListener('change', ensureModeHidden);
-    ensureModeHidden();
+    if (uploadType) {
+        uploadType.addEventListener('change', updateFromType);
+        updateFromType();
+    } else {
+        console.warn('#upload_type tidak ditemukan di DOM.');
+        // enable submit only if hidden inputs already ter-set (defensive)
+        submitBtn.disabled = false;
+    }
 
-    // Ensure buttons submit the correct value (for browsers that ignore button.value)
-    publishBtn.addEventListener('click', function () {
-        // set a hidden input 'submit_for' to 'submit' before submitting
-        let h = form.querySelector('input[name="submit_for"]');
-        if (!h) {
-            h = document.createElement('input');
-            h.type = 'hidden';
-            h.name = 'submit_for';
-            form.appendChild(h);
+    // final check before submit
+    form.addEventListener('submit', function (ev) {
+        if (uploadType && uploadType.value === '') {
+            ev.preventDefault();
+            alert('Silakan pilih jenis pengajuan: Dokumen Baru atau Ganti Versi Lama.');
+            uploadType.focus();
+            return false;
         }
-        h.value = 'submit';
-
-        // also set mode hidden
-        let m = form.querySelector('input[name="mode"]');
-        if (m) m.value = modeSelect.value;
+        // ensure hidden values valid (redundan)
+        updateFromType();
     });
-
-    draftBtn.addEventListener('click', function () {
-        let h = form.querySelector('input[name="submit_for"]');
-        if (!h) {
-            h = document.createElement('input');
-            h.type = 'hidden';
-            h.name = 'submit_for';
-            form.appendChild(h);
-        }
-        h.value = 'save';
-
-        let m = form.querySelector('input[name="mode"]');
-        if (m) m.value = modeSelect.value;
-    });
-
 });
 </script>
 @endsection
+

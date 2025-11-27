@@ -5,10 +5,17 @@
 
 @section('content')
 @php
+    use Illuminate\Support\Facades\Storage;
+
     $user = auth()->user();
 
-    // Versi yang dipakai untuk tampilan utama
+    // Versi yang dipakai untuk tampilan utama (defensive)
     $currentVersion = $version ?? ($document->currentVersion ?? null);
+
+    // fallback: try latestVersion if provided separately
+    if (! $currentVersion) {
+        $currentVersion = $latestVersion ?? null;
+    }
 
     // Tentukan target versi untuk submit approval:
     $submitVersionId = optional($currentVersion)->id ?? ($document->current_version_id ?? null);
@@ -28,7 +35,26 @@
 
     // pastikan $relatedLinks selalu array
     if (!isset($relatedLinks) || !is_array($relatedLinks)) {
+        // try decode if it's JSON stored in document
         $relatedLinks = [];
+        if (!empty($document->related_links)) {
+            if (is_array($document->related_links)) {
+                $relatedLinks = $document->related_links;
+            } elseif (is_string($document->related_links)) {
+                $decoded = json_decode($document->related_links, true);
+                if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
+                    $relatedLinks = $decoded;
+                } else {
+                    // as fallback, split by newlines (some places store one-per-line)
+                    $lines = preg_split('/\r\n|\r|\n/', trim($document->related_links));
+                    foreach ($lines as $ln) {
+                        $ln = trim($ln);
+                        if ($ln === '') continue;
+                        $relatedLinks[] = ['label' => $ln, 'url' => $ln];
+                    }
+                }
+            }
+        }
     }
 
     // cek hak delete (trash) untuk tombol Recycle Bin (mr/director/admin)
@@ -47,6 +73,39 @@
                 }
             } catch (\Throwable $e) {
                 // ignore
+            }
+        }
+    }
+
+    // Prepare versions list defensively
+    $versions = $versions ?? ($document->versions ?? collect());
+
+    // Determine a version object to check pdf_path - prefer currentVersion then latestVersion then first of relation
+    $v = $currentVersion ?? ($latestVersion ?? null);
+    if (! $v) {
+        try {
+            $v = ($document->versions && $document->versions->count()) ? $document->versions->first() : null;
+        } catch (\Throwable $e) {
+            $v = null;
+        }
+    }
+
+    // Prepare PDF URL safely (assumes files stored on 'public' disk or path stored as 'pdf_path')
+    $pdfUrl = null;
+    $pdfExists = false;
+    if ($v && !empty($v->pdf_path)) {
+        try {
+            $pdfExists = Storage::disk('public')->exists(ltrim($v->pdf_path, '/'));
+        } catch (\Throwable $e) {
+            $pdfExists = false;
+        }
+        if ($pdfExists) {
+            // generate URL using storage disk (works when php artisan storage:link is set)
+            try {
+                $pdfUrl = Storage::disk('public')->url(ltrim($v->pdf_path, '/'));
+            } catch (\Throwable $e) {
+                // fallback to asset('storage/...')
+                $pdfUrl = asset('storage/' . ltrim($v->pdf_path, '/'));
             }
         }
     }
@@ -104,6 +163,14 @@
             </button>
           </form>
         @endif
+
+        {{-- === PDF viewer / download inline buttons (inserted here) === --}}
+        @if($pdfUrl)
+          <button id="openPdfBtn" class="btn" type="button" style="margin-left:6px;" data-pdf-url="{{ $pdfUrl }}">Open PDF Viewer</button>
+          <a href="{{ $pdfUrl }}" class="btn" target="_blank" rel="noopener noreferrer" style="margin-left:6px;">Download PDF</a>
+        @else
+          <div class="small-muted" style="margin-left:6px;">PDF belum di-upload untuk versi ini.</div>
+        @endif
       </div>
 
       {{-- Version content --}}
@@ -111,7 +178,7 @@
         @if($currentVersion && ($currentVersion->pasted_text || $currentVersion->plain_text))
           {{-- show text (preserve line breaks). Use nl2br(e(...)) wrapped with {!! !!} --}}
           <pre style="white-space:pre-wrap;font-family:inherit;border:0;background:transparent;padding:0;margin:0;">
-            {!! nl2br(e($currentVersion->pasted_text ?? $currentVersion->plain_text)) !!}
+{!! nl2br(e($currentVersion->pasted_text ?? $currentVersion->plain_text)) !!}
           </pre>
         @elseif($currentVersion && $currentVersion->file_path)
           <div>
@@ -124,6 +191,32 @@
           </div>
         @endif
       </div>
+
+      {{-- Inline PDF viewer (hidden by default) --}}
+      @if($pdfUrl)
+        <div id="pdfWrapper" style="display:none; margin-top:16px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+            <div style="display:flex;gap:8px;align-items:center;">
+              <button id="pdfZoomIn" type="button" class="btn-small" title="Zoom in">+</button>
+              <button id="pdfZoomOut" type="button" class="btn-small" title="Zoom out">−</button>
+              <span id="pdfZoomPct" class="small-muted" style="margin-left:6px;">100%</span>
+            </div>
+            <div>
+              <a id="pdfOpenNew" href="{{ $pdfUrl }}" target="_blank" rel="noopener noreferrer" class="btn-small">Open in new tab</a>
+              <button id="pdfClose" type="button" class="btn-small" style="margin-left:8px;">Close</button>
+            </div>
+          </div>
+
+          <div style="border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;">
+            <iframe id="pdfIframe"
+                    src=""
+                    width="100%"
+                    height="700"
+                    frameborder="0"
+                    style="display:block;border:0;transform-origin:top left;"></iframe>
+          </div>
+        </div>
+      @endif
     </div>
 
     {{-- RIGHT: sidebar --}}
@@ -132,23 +225,23 @@
       <div style="background:#fff;border:1px solid #eef3f8;border-radius:8px;padding:12px;">
         <h4 style="margin-top:0;margin-bottom:8px">Versions</h4>
         <ul style="list-style:none;padding:0;margin:0">
-          @forelse($versions as $v)
+          @forelse($versions as $ver)
             <li style="padding:8px 0;border-bottom:1px solid #f4f6f8;">
               <div style="display:flex;justify-content:space-between;align-items:center;">
                 <div>
-                  <a href="{{ route('documents.show', $document->id) }}?version_id={{ $v->id }}">
-                    {{ $v->version_label }}
+                  <a href="{{ route('documents.show', $document->id) }}?version_id={{ $ver->id }}">
+                    {{ $ver->version_label }}
                   </a>
                   <div class="small-muted" style="font-size:12px;">
-                    {{ $v->status }} — {{ $v->created_at ? $v->created_at->format('Y-m-d') : '-' }}
+                    {{ $ver->status }} — {{ $ver->created_at ? $ver->created_at->format('Y-m-d') : '-' }}
                   </div>
                 </div>
                 <div style="text-align:right;">
                   @if(Route::has('versions.show'))
-                    <a class="btn-small" href="{{ route('versions.show', $v->id) }}">Open</a>
+                    <a class="btn-small" href="{{ route('versions.show', $ver->id) }}">Open</a>
                   @endif
-                  @if($v->file_path)
-                    <a class="btn-small btn-muted" href="{{ route('documents.versions.download', $v->id) }}">DL</a>
+                  @if($ver->file_path)
+                    <a class="btn-small btn-muted" href="{{ route('documents.versions.download', $ver->id) }}">DL</a>
                   @else
                     <span class="btn-small btn-muted" style="opacity:.6;">No file</span>
                   @endif
@@ -168,21 +261,19 @@
         @if(!empty($relatedLinks))
           <ul style="list-style:none;padding:0;margin:0;">
             @foreach($relatedLinks as $link)
+              @php
+                // ensure shape safety: label/url
+                $lkLabel = is_array($link) && isset($link['label']) ? $link['label'] : (is_string($link) ? $link : ($link->label ?? 'Link'));
+                $lkUrl = is_array($link) && isset($link['url']) ? $link['url'] : (is_string($link) ? $link : ($link->url ?? '#'));
+              @endphp
               <li style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-top:1px solid #f1f5f9;">
                 <div style="flex:1;margin-right:8px;word-break:break-word;color:#0b5ed7;">
-                  <a href="{{ $link['url'] }}"
-                     target="_blank"
-                     rel="noopener noreferrer"
-                     style="text-decoration:none;color:#0b5ed7;">
-                    {{ $link['label'] }}
+                  <a href="{{ $lkUrl }}" target="_blank" rel="noopener noreferrer" style="text-decoration:none;color:#0b5ed7;">
+                    {{ $lkLabel }}
                   </a>
                 </div>
                 <div style="white-space:nowrap;">
-                  <a href="{{ $link['url'] }}"
-                     target="_blank"
-                     rel="noopener noreferrer"
-                     class="btn"
-                     style="background:#eef7ff;border:1px solid #dbeefd;padding:.35rem .6rem;border-radius:6px;color:#0b5ed7;text-decoration:none;font-size:.85rem;">
+                  <a href="{{ $lkUrl }}" target="_blank" rel="noopener noreferrer" class="btn" style="background:#eef7ff;border:1px solid #dbeefd;padding:.35rem .6rem;border-radius:6px;color:#0b5ed7;text-decoration:none;font-size:.85rem;">
                     Open
                   </a>
                 </div>
@@ -380,8 +471,8 @@
   }
   /* simple utilities */
   .small-muted{ color:#6b7280; font-size:.95rem; }
-  .btn{ display:inline-block; padding:.45rem .75rem; border-radius:6px; background:#eef7ff; color:#0b63d4; border:1px solid #dbeefd; text-decoration:none; }
-  .btn-muted{ display:inline-block; padding:.45rem .75rem; border-radius:6px; background:#f3f4f6; color:#6b7280; border:1px solid #e6eef8; text-decoration:none; }
+  .btn{ display:inline-block; padding:.45rem .75rem; border-radius:6px; background:#eef7ff; color:#0b63d4; border:1px solid #dbeefd; text-decoration:none; cursor:pointer; }
+  .btn-muted{ display:inline-block; padding:.45rem .75rem; border-radius:6px; background:#f3f4f6; color:#6b7280; border:1px solid #e6eef8; text-decoration:none; cursor:default; }
   .btn-primary{ background:#0b5ed7; color:#fff; border:1px solid #0b5ed7; }
 </style>
 
@@ -404,11 +495,65 @@
     }
 
     // Sync version_id from query string ke hidden input (kalau buka ?version_id=xx)
-    var params = new URLSearchParams(window.location.search);
-    var v = params.get('version_id');
-    if (v) {
-      var input = document.querySelector('input[name="version_id"]');
-      if (input) input.value = v;
+    try {
+      var params = new URLSearchParams(window.location.search);
+      var v = params.get('version_id');
+      if (v) {
+        var input = document.querySelector('input[name="version_id"]');
+        if (input) input.value = v;
+      }
+    } catch (e) { /* ignore */ }
+
+    // PDF viewer controls
+    var openBtn = document.getElementById('openPdfBtn');
+    var pdfWrapper = document.getElementById('pdfWrapper');
+    var pdfIframe = document.getElementById('pdfIframe');
+    var pdfClose = document.getElementById('pdfClose');
+    var pdfZoomIn = document.getElementById('pdfZoomIn');
+    var pdfZoomOut = document.getElementById('pdfZoomOut');
+    var pdfZoomPct = document.getElementById('pdfZoomPct');
+
+    var currentZoom = 1;
+
+    function setZoom(z) {
+      currentZoom = Math.max(0.5, Math.min(2.5, z));
+      if (pdfIframe) {
+        pdfIframe.style.transform = 'scale(' + currentZoom + ')';
+        // adjust height so scaled content remains visible reasonably
+        pdfIframe.style.height = (700 / currentZoom) + 'px';
+      }
+      if (pdfZoomPct) pdfZoomPct.textContent = Math.round(currentZoom * 100) + '%';
+    }
+
+    if (openBtn && pdfIframe && pdfWrapper) {
+      openBtn.addEventListener('click', function () {
+        var pdfUrl = openBtn.getAttribute('data-pdf-url') || openBtn.dataset.pdfUrl;
+        if (!pdfUrl) {
+          alert('PDF URL tidak tersedia.');
+          return;
+        }
+        if (!pdfIframe.getAttribute('src')) {
+          pdfIframe.setAttribute('src', pdfUrl);
+          var pdfOpenNew = document.getElementById('pdfOpenNew');
+          if (pdfOpenNew) pdfOpenNew.setAttribute('href', pdfUrl);
+        }
+        pdfWrapper.style.display = (pdfWrapper.style.display === 'none' || pdfWrapper.style.display === '') ? 'block' : 'none';
+        // reset zoom to default when opening
+        setZoom(1);
+        if (pdfWrapper.style.display === 'block') pdfWrapper.scrollIntoView({behavior:'smooth'});
+      });
+    }
+
+    if (pdfClose) {
+      pdfClose.addEventListener('click', function () {
+        if (pdfWrapper) pdfWrapper.style.display = 'none';
+      });
+    }
+    if (pdfZoomIn) {
+      pdfZoomIn.addEventListener('click', function () { setZoom(currentZoom + 0.1); });
+    }
+    if (pdfZoomOut) {
+      pdfZoomOut.addEventListener('click', function () { setZoom(currentZoom - 0.1); });
     }
   })();
 </script>

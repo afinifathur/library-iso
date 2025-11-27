@@ -14,7 +14,7 @@ class ExtractMissingText extends Command
         {--limit=0 : optional limit to number of versions to process} 
         {--pdftotext= : optional full path to pdftotext binary}';
 
-    protected $description = 'Extract plain text for document versions that have no plain_text yet (docx -> xml, pdf -> pdftotext)';
+    protected $description = 'Extract plain text for document versions that have no plain_text yet (docx -> xml, pdf -> pdftotext, doc -> libreoffice)';
 
     public function handle()
     {
@@ -100,18 +100,40 @@ class ExtractMissingText extends Command
                     @unlink($tmpPdf);
                 }
 
-                // DOC (old binary) - best-effort: use antiword if available
+                /**
+                 * DOC via LibreOffice (best and stable)
+                 */
                 if (!$text && str_ends_with($lower, '.doc')) {
+                    $this->info(" - converting .doc using LibreOffice...");
+
                     $tmpDoc = sys_get_temp_dir().DIRECTORY_SEPARATOR.'doc_'.uniqid().'.doc';
                     file_put_contents($tmpDoc, $content);
-                    // try antiword
-                    $anti = 'antiword';
-                    $cmd = escapeshellcmd($anti) . ' ' . escapeshellarg($tmpDoc) . ' 2>&1';
+
+                    $lo = env('LIBREOFFICE_PATH', 'soffice');
+                    $outputDir = sys_get_temp_dir();
+
+                    // LibreOffice will create a file with same basename but .txt in $outputDir
+                    $cmd = "\"{$lo}\" --headless --convert-to txt --outdir " . escapeshellarg($outputDir) . " " . escapeshellarg($tmpDoc) . " 2>&1";
+
                     $out = null; $ret = null;
                     exec($cmd, $out, $ret);
-                    if ($ret === 0) {
-                        $text = implode("\n", $out);
+
+                    $convertedTxt = $outputDir . DIRECTORY_SEPARATOR . pathinfo($tmpDoc, PATHINFO_FILENAME) . '.txt';
+                    if (file_exists($convertedTxt)) {
+                        $text = file_get_contents($convertedTxt);
+                        @unlink($convertedTxt);
+                    } else {
+                        // fallback: try reading any .txt created with pattern
+                        $pattern = $outputDir . DIRECTORY_SEPARATOR . pathinfo($tmpDoc, PATHINFO_FILENAME) . '.*.txt';
+                        foreach (glob($outputDir . DIRECTORY_SEPARATOR . pathinfo($tmpDoc, PATHINFO_FILENAME) . '*.txt') as $candidate) {
+                            if (file_exists($candidate)) {
+                                $text = file_get_contents($candidate);
+                                @unlink($candidate);
+                                break;
+                            }
+                        }
                     }
+
                     @unlink($tmpDoc);
                 }
 

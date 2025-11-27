@@ -12,7 +12,6 @@ use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
-use Jfcherng\Diff\DiffHelper;
 
 class DocumentController extends Controller
 {
@@ -186,7 +185,13 @@ class DocumentController extends Controller
             $document->save();
         }
 
-        $disk = Storage::disk('documents');
+        // choose disk (prefer 'documents' disk, fallback to 'public')
+        $disk = null;
+        try {
+            $disk = Storage::disk('documents');
+        } catch (\Throwable $e) {
+            $disk = Storage::disk('public');
+        }
 
         // Save master (optional)
         $master_path = null;
@@ -231,7 +236,7 @@ class DocumentController extends Controller
             'checksum'      => $checksum,
             'change_note'   => $request->input('change_note'),
             'signed_by'     => $request->input('signed_by') ?: $user->name,
-            'signed_at'     => $request->date('signed_at'),
+            'signed_at'     => $this->parseDateString($request->input('signed_at')),
         ]);
 
         // Text extraction priority
@@ -447,15 +452,19 @@ class DocumentController extends Controller
 
     /**
      * Detail dokumen + latest version + semua versi.
+     *
+     * NOTE: This method injects defensive placeholders for potentially-null
+     * relations/properties (e.g. signature) so views that access them directly
+     * won't crash. It's recommended to update views to use optional() instead.
      */
     public function show(Document $document)
     {
         $document->load(['department', 'versions.creator' => fn ($q) => $q->orderByDesc('id')]);
 
         $versions = $document->versions->sortByDesc('id')->values();
-        $version  = $versions->first();
+        $version  = $versions->first() ?: null;
 
-        // --- build related links array terstruktur untuk sidebar ---
+        // Build related links (unchanged)
         $relatedLinks = [];
         $rawLinks     = null;
 
@@ -485,7 +494,7 @@ class DocumentController extends Controller
                 $label = $url;
                 $docId = null;
 
-                // coba deteksi /documents/{id}
+                // try detect /documents/{id}
                 if (preg_match('#/documents/(\d+)#', $url, $m)) {
                     $docId = (int) $m[1];
                     $docRef = Document::find($docId);
@@ -494,12 +503,10 @@ class DocumentController extends Controller
                         $title = $docRef->title ?: '';
                         $label = trim(($code ? $code.' — ' : '').$title) ?: $url;
                     } else {
-                        // kalau dokumen nggak ketemu, tetap pakai URL apa adanya
                         $label = $url;
                         $docId = null;
                     }
                 } else {
-                    // eksternal URL: singkatkan tampilan
                     $short = preg_replace('#^https?://#i', '', $url);
                     $label = strlen($short) > 48 ? substr($short, 0, 45).'...' : $short;
                 }
@@ -510,6 +517,26 @@ class DocumentController extends Controller
                     'doc_id' => $docId,
                 ];
             }
+        }
+
+        // Defensive placeholders: if views access ->signature or similar relations directly,
+        // ensure an object exists to avoid "Attempt to read property ... on null".
+        // Prefer to update views to use optional() — this is a backward-compatible safety.
+        if ($version && (! property_exists($version, 'signature') || $version->signature === null)) {
+            // inject lightweight placeholder object
+            $version->signature = (object) [
+                'signed_at' => null,
+                'signed_by' => null,
+                // add other expected props if needed
+            ];
+        }
+
+        if (! property_exists($document, 'signature') || $document->signature === null) {
+            // add placeholder at document-level as well (if view uses $document->signature)
+            $document->signature = (object) [
+                'signed_at' => null,
+                'signed_by' => null,
+            ];
         }
 
         return view('documents.show', [
@@ -557,7 +584,12 @@ class DocumentController extends Controller
         }
 
         $user = $request->user();
-        $disk = Storage::disk('documents');
+        $disk = null;
+        try {
+            $disk = Storage::disk('documents');
+        } catch (\Throwable $e) {
+            $disk = Storage::disk('public');
+        }
 
         $version = null;
 
@@ -666,7 +698,13 @@ class DocumentController extends Controller
      */
     public function downloadVersion(DocumentVersion $version)
     {
-        $disk = Storage::disk('documents');
+        $disk = null;
+        try {
+            $disk = Storage::disk('documents');
+        } catch (\Throwable $e) {
+            $disk = Storage::disk('public');
+        }
+
         if (! $version->file_path || ! $disk->exists($version->file_path)) {
             abort(404);
         }
@@ -676,8 +714,6 @@ class DocumentController extends Controller
 
     /**
      * Mark version as trashed (non-destructive).
-     *
-     * Route: POST versions/{version}/trash
      */
     public function trashVersion(Request $request, DocumentVersion $version)
     {
@@ -686,20 +722,17 @@ class DocumentController extends Controller
             abort(403);
         }
 
-        // only allow MR, director, admin to trash (adjust roles as desired)
         if (method_exists($user, 'hasAnyRole') && ! $user->hasAnyRole(['mr','director','admin'])) {
             abort(403, 'Unauthorized to trash versions.');
         }
 
         $oldStatus = $version->status ?? null;
 
-        // Mark as trashed (non-destructive). Controller expects these fields exist.
         $version->update([
             'status'         => 'trashed',
             'approval_stage' => null,
         ]);
 
-        // optional audit log
         if (class_exists(\App\Models\AuditLog::class)) {
             \App\Models\AuditLog::create([
                 'event'               => 'trash_version',
@@ -715,11 +748,13 @@ class DocumentController extends Controller
     }
 
     /**
-     * BUAT DOKUMEN BARU + BASELINE V1 APPROVED.
+     * BUAT DOKUMEN BARU + BASELINE V1 APPROVED or DRAFT.
      *
-     * This method now supports:
-     * - mode = 'new' (create document). submit_for = 'publish'|'draft'
-     * - mode = 'replace' (create draft version for existing document)
+     * Supports:
+     * - upload_type/mode = 'new' (create document)
+     * - upload_type/mode = 'replace' (create draft version for existing document)
+     *
+     * submit_for: 'publish'|'submit' => publish; 'save'|'draft' => draft
      */
     public function store(Request $request)
     {
@@ -729,13 +764,17 @@ class DocumentController extends Controller
             return redirect()->route('login')->with('error', 'Login required.');
         }
 
-        // mode: new | replace
-        $mode = $request->input('mode', 'new');
-        // submit action from buttons: publish|draft (from UI)
-        $submit = $request->input('submit_for', 'publish');
+        // support both new names and legacy name
+        $uploadType = $request->input('upload_type', $request->input('mode', 'new'));
+        $submitRaw  = $request->input('submit_for', $request->input('submit', 'publish'));
 
-        if ($mode === 'replace') {
-            // replace: must reference existing document via doc_code (or document_id)
+        // normalize submit action
+        $submit = in_array($submitRaw, ['save','draft'], true) ? 'draft' : (in_array($submitRaw, ['publish','submit'], true) ? 'publish' : $submitRaw);
+
+        // === validation rules differ for new vs replace; handle Category presence optional ===
+        $categoryRule = class_exists(\App\Models\Category::class) ? 'required|integer|exists:categories,id' : 'nullable';
+
+        if ($uploadType === 'replace') {
             $validated = $request->validate([
                 'doc_code'      => ['required','string','exists:documents,doc_code'],
                 'version_label' => ['nullable','string','max:50'],
@@ -745,15 +784,19 @@ class DocumentController extends Controller
                 'related_links' => 'nullable|string',
             ]);
 
-            // find document
             $document = Document::where('doc_code', $validated['doc_code'])->first();
 
             if (! $document) {
                 return back()->withInput()->with('error', 'Dokumen tidak ditemukan untuk diganti versinya.');
             }
 
-            // store file if provided
-            $disk = Storage::disk('documents');
+            // choose disk
+            try {
+                $disk = Storage::disk('documents');
+            } catch (\Throwable $e) {
+                $disk = Storage::disk('public');
+            }
+
             $file_path = null;
             $file_mime = null;
             $checksum  = null;
@@ -786,7 +829,6 @@ class DocumentController extends Controller
             $version->plain_text    = $request->input('pasted_text') ?? null;
             $version->save();
 
-            // save related links on document if provided
             if ($request->has('related_links')) {
                 $document->related_links = $this->parseRelatedLinksInput($request->input('related_links'));
                 $document->save();
@@ -807,11 +849,11 @@ class DocumentController extends Controller
                 ->with('success', 'Draft versi baru berhasil dibuat & masuk Draft Container.');
         }
 
-        // Default: mode === 'new'
+        // Default: create new document
         $validated = $request->validate([
             'doc_code'      => 'required|string|max:120|unique:documents,doc_code',
             'title'         => 'required|string|max:255',
-            'category_id'   => 'required|integer|exists:categories,id',
+            'category_id'   => $categoryRule,
             'department_id' => 'required|integer|exists:departments,id',
             'file'          => 'nullable|file|mimes:pdf,doc,docx|max:51200',
             'pasted_text'   => 'nullable|string',
@@ -824,7 +866,7 @@ class DocumentController extends Controller
             'doc_code'      => $validated['doc_code'],
             'title'         => $validated['title'],
             'department_id' => $validated['department_id'],
-            'category_id'   => $validated['category_id'],
+            'category_id'   => $validated['category_id'] ?? null,
         ]);
 
         if ($request->has('related_links')) {
@@ -834,7 +876,11 @@ class DocumentController extends Controller
             $document->save();
         }
 
-        $disk = Storage::disk('documents');
+        try {
+            $disk = Storage::disk('documents');
+        } catch (\Throwable $e) {
+            $disk = Storage::disk('public');
+        }
 
         $file_path = null;
         $file_mime = null;
@@ -892,7 +938,7 @@ class DocumentController extends Controller
                 ->with('success', 'Baseline uploaded and published.');
         }
 
-        // otherwise save as draft (publish button not used) — create draft version
+        // otherwise save as draft — create draft version and go to drafts
         $version = DocumentVersion::create([
             'document_id'   => $document->id,
             'version_label' => $validated['version_label'] ?? 'v1',
@@ -993,7 +1039,7 @@ class DocumentController extends Controller
 
     protected function buildDiff(string $text1, string $text2): string
     {
-        if (class_exists(DiffHelper::class)) {
+        if (class_exists(\Jfcherng\Diff\DiffHelper::class)) {
             $diffOptions = [
                 'context'          => 2,
                 'ignoreWhitespace' => true,
@@ -1007,7 +1053,7 @@ class DocumentController extends Controller
                 'outputTagAsString' => false,
             ];
 
-            return DiffHelper::calculate(
+            return \Jfcherng\Diff\DiffHelper::calculate(
                 $text1,
                 $text2,
                 'Combined',
