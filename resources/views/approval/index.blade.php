@@ -1,3 +1,4 @@
+{{-- resources/views/approval/index.blade.php --}}
 @extends('layouts.iso')
 
 @section('title', 'Approval Queue')
@@ -59,14 +60,17 @@
                         $title = $doc->title ?? $v->title ?? '-';
                         $dept = optional($doc->department)->code ?? optional($doc->department)->name ?? '-';
                         $versionLabel = $v->version_label ?? $v->label ?? '-';
-                        $creator = optional($v->creator ?? $v->created_by_user);
-                        $creatorDisplay = $creator->email ?? $creator->name ?? '-';
-                        $when = optional($v->created_at)->format('Y-m-d') ?? '-';
+                        $creator = optional($v->creator ?? null);
+                        $creatorDisplay = $creator->email ?? $creator->name ?? $v->created_by ?? '-';
+                        $when = $v->created_at ? $v->created_at->format('Y-m-d') : '-';
+                        // ensure dataset values are strings
+                        $dataVersionId = e((string) ($v->id ?? ''));
+                        $dataDocId = e((string) ($docId ?? ''));
                     @endphp
 
-                    <tr data-version-id="{{ e($v->id) }}" data-doc-id="{{ e($docId) }}">
+                    <tr data-version-id="{{ $dataVersionId }}" data-doc-id="{{ $dataDocId }}">
                         <td>
-                            <input class="select-version" type="checkbox" value="{{ e($v->id) }}" data-doc="{{ e($docId) }}" aria-label="Select version {{ e($versionLabel) }}">
+                            <input class="select-version" type="checkbox" value="{{ $dataVersionId }}" data-doc="{{ $dataDocId }}" aria-label="Select version {{ e($versionLabel) }}" disabled>
                         </td>
 
                         <td>
@@ -87,14 +91,21 @@
 
                         <td>
                             <div class="action-buttons" style="display:flex;gap:6px;flex-wrap:wrap">
-                                <!-- Open -->
-                                @if($v->id)
-                                    <a href="{{ route('versions.show', $v->id) }}" target="_blank" rel="noopener noreferrer" class="btn btn-outline-primary btn-sm action-open" aria-label="Open version {{ e($versionLabel) }}">Open</a>
+                                <!-- Open (with onclick fallback to persist flag) -->
+                                @if(!empty($v->id))
+                                    <a href="{{ route('versions.show', $v->id) }}"
+                                       target="_blank"
+                                       rel="noopener noreferrer"
+                                       class="btn btn-outline-primary btn-sm action-open"
+                                       aria-label="Open version {{ e($versionLabel) }}"
+                                       onclick="try{ localStorage.setItem('iso_opened_version_{{ $v->id }}','1'); }catch(e){}">
+                                        Open
+                                    </a>
                                 @else
                                     <button class="btn btn-outline-primary btn-sm" disabled>Open</button>
                                 @endif
 
-                                <!-- Compare (single) -> link to document compare with version param -->
+                                <!-- Compare (single) -->
                                 @if($docId)
                                     <a href="{{ route('documents.compare', $docId) }}?v2={{ $v->id }}" target="_blank" rel="noopener noreferrer" class="btn btn-outline-secondary btn-sm action-compare" aria-label="Compare version {{ e($versionLabel) }}">Compare</a>
                                 @else
@@ -134,24 +145,24 @@
 </div>
 
 <!-- Reject Modal -->
-<div id="rejectModal" class="modal-overlay" aria-hidden="true" style="display:none;">
-  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="rejectModalTitle">
+<div id="rejectModal" class="modal-overlay" aria-hidden="true" style="display:none;position:fixed;inset:0;align-items:center;justify-content:center;background:rgba(0,0,0,0.35);z-index:9999;">
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="rejectModalTitle" style="background:#fff;border-radius:8px;width:90%;max-width:680px;padding:18px;">
     <div class="modal-header" style="display:flex;justify-content:space-between;align-items:center">
       <h3 id="rejectModalTitle" style="margin:0">Alasan Reject <span id="rejectDocCode" class="fw-bold"></span></h3>
-      <button class="modal-close" type="button" onclick="closeRejectModal()" aria-label="Close">×</button>
+      <button class="modal-close" type="button" onclick="closeRejectModal()" aria-label="Close" style="background:none;border:0;font-size:22px;line-height:1;cursor:pointer">×</button>
     </div>
 
-    <div class="modal-body">
+    <div class="modal-body" style="margin-top:12px;">
       <form id="rejectForm" onsubmit="return false;">
         <div class="form-row">
           <label for="reject_reason">Alasan reject <small class="text-muted">(wajib diisi)</small></label>
-          <textarea id="reject_reason" name="reason" class="form-textarea" rows="6" required></textarea>
+          <textarea id="reject_reason" name="rejected_reason" class="form-textarea" rows="6" required style="width:100%;padding:8px;border:1px solid #e6eef8;border-radius:6px;"></textarea>
         </div>
         <input type="hidden" id="reject_version_id" name="version_id" value="">
       </form>
     </div>
 
-    <div class="modal-footer" style="display:flex;justify-content:flex-end;gap:8px">
+    <div class="modal-footer" style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px;">
       <button class="btn btn-muted" type="button" onclick="closeRejectModal()">Batal</button>
       <button id="rejectSubmitBtn" class="btn btn-danger" type="button">Submit Reject</button>
     </div>
@@ -162,178 +173,285 @@
 @section('footerscripts')
 <script>
 (() => {
-  // configuration values from blade (safe)
-  const baseApprovalUrl = "{{ rtrim(url('/approval'), '/') }}"; // e.g. /approval
-  const csrfToken = "{{ csrf_token() }}";
+  // ---------- config (injected by blade) ----------
+  const BASE_APPROVAL_URL = "{{ rtrim(url('/approval'), '/') }}";
+  const BASE_DOCUMENTS_URL = "{{ rtrim(url('/documents'), '/') }}";
+  const CSRF_TOKEN = "{{ csrf_token() }}";
 
-  // track opened versions
-  const opened = new Set();
+  // ---------- helpers ----------
+  const qs = (sel, ctx = document) => ctx.querySelector(sel);
+  const qsa = (sel, ctx = document) => Array.from(ctx.querySelectorAll(sel));
 
-  // helpers
-  const enableRowActions = (tr) => {
+  // avoid duplicate listener registration by marking elements
+  function markAttached(el, key) {
+    if (!el) return false;
+    if (el.dataset[key]) return false;
+    el.dataset[key] = '1';
+    return true;
+  }
+
+  // Enable action buttons for a row
+  function enableRowActions(tr) {
     if (!tr) return;
     tr.querySelectorAll('.btn-approve, .btn-reject').forEach(btn => {
       btn.removeAttribute('disabled');
       btn.removeAttribute('aria-disabled');
     });
-  };
+    // enable checkbox for selection
+    tr.querySelectorAll('.select-version').forEach(cb => cb.disabled = false);
+    // add a visual highlight
+    tr.classList.add('iso-opened-row');
+  }
 
-  // MARK: Open handling - when user clicks Open link, mark opened and enable buttons
-  document.querySelectorAll('.action-open').forEach(link => {
-    link.addEventListener('click', function () {
-      const tr = this.closest('tr');
-      const vid = tr?.dataset?.versionId;
-      if (!vid) return;
-      opened.add(String(vid));
-      // small delay to allow browser to open new tab
-      setTimeout(() => enableRowActions(tr), 250);
-    });
-  });
+  // Find row(s) by version id and enable them
+  function enableByVersionId(vid) {
+    if (!vid) return;
+    qsa(`tr[data-version-id="${vid}"]`).forEach(enableRowActions);
+  }
 
-  // Approve: block if not opened
-  document.querySelectorAll('.action-form-approve').forEach(form => {
-    form.addEventListener('submit', function (e) {
-      const tr = this.closest('tr');
-      const vid = tr?.dataset?.versionId;
-      if (!vid || !opened.has(String(vid))) {
-        e.preventDefault();
-        alert('Silakan buka dokumen (Open) terlebih dahulu sebelum menyetujui.');
-        return false;
-      }
-      // otherwise allow submit (normal POST form)
-    });
-  });
+  // Persist open state (localStorage)
+  function persistOpened(vid) {
+    if (!vid) return;
+    try { localStorage.setItem('iso_opened_version_' + vid, '1'); } catch (e) { /* ignore */ }
+  }
 
-  // Reject: open modal only if opened
-  document.querySelectorAll('.btn-reject').forEach(btn => {
-    btn.addEventListener('click', function () {
-      const tr = this.closest('tr');
-      const vid = tr?.dataset?.versionId;
-      const docCode = this.getAttribute('data-doc-code') || '';
-      if (!vid || !opened.has(String(vid))) {
-        alert('Silakan buka dokumen (Open) terlebih dahulu sebelum menolak.');
-        return;
-      }
-      document.getElementById('reject_version_id').value = vid;
-      document.getElementById('rejectDocCode').textContent = docCode ? `(${docCode})` : '';
-      document.getElementById('reject_reason').value = '';
-      showRejectModal();
-    });
-  });
+  function isPersistedOpened(vid) {
+    try { return !!localStorage.getItem('iso_opened_version_' + vid); } catch (e) { return false; }
+  }
 
-  // Modal controls
-  window.showRejectModal = function () {
-    const el = document.getElementById('rejectModal');
-    if (!el) return;
-    el.style.display = 'flex';
-    el.setAttribute('aria-hidden', 'false');
-    // focus textarea after modal shown
-    setTimeout(() => document.getElementById('reject_reason').focus(), 50);
-  };
-  window.closeRejectModal = function () {
-    const el = document.getElementById('rejectModal');
-    if (!el) return;
-    el.style.display = 'none';
-    el.setAttribute('aria-hidden', 'true');
-  };
+  // ---------- Open handlers ----------
+  function attachOpenHandlers() {
+    qsa('.action-open').forEach(link => {
+      if (!markAttached(link, 'isoOpenAttached')) return;
+      link.addEventListener('click', function (ev) {
+        // Note: do NOT prevent default so link can open in new tab
+        try {
+          const tr = this.closest('tr');
+          const vid = tr?.dataset?.versionId;
+          if (!vid) return;
+          persistOpened(vid);
+          enableByVersionId(vid);
 
-  // Submit reject via fetch
-  const rejectBtn = document.getElementById('rejectSubmitBtn');
-  if (rejectBtn) {
-    rejectBtn.addEventListener('click', function () {
-      const btn = this;
-      const vid = document.getElementById('reject_version_id').value;
-      const reason = document.getElementById('reject_reason').value.trim();
+          // notify opener window if opened from child
+          try {
+            if (window.opener && !window.opener.closed) {
+              window.opener.postMessage({ iso_action: 'version_opened', version_id: vid }, '*');
+            }
+          } catch (e) { /* ignore */ }
+        } catch (e) { console.warn('open handler error', e); }
+      }, { passive: true });
 
-      if (!reason) {
-        alert('Alasan reject wajib diisi.');
-        return;
-      }
-      if (!vid) {
-        alert('Version ID tidak terdeteksi.');
-        return;
-      }
-
-      btn.disabled = true;
-      btn.textContent = 'Submitting...';
-
-      fetch(`${baseApprovalUrl}/${encodeURIComponent(vid)}/reject`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'X-CSRF-TOKEN': csrfToken
-        },
-        body: JSON.stringify({ notes: reason })
-      })
-      .then(async res => {
-        let payload = {};
-        const ct = res.headers.get('content-type') || '';
-        if (ct.includes('application/json')) payload = await res.json();
-        else payload = { success: res.ok };
-
-        if (res.ok && (payload.success === undefined || payload.success)) {
-          closeRejectModal();
-          alert(payload.message || 'Version berhasil direject.');
-          window.location.reload();
-        } else {
-          throw new Error(payload.message || 'Gagal menolak versi.');
+      // support middle-click (auxclick) too
+      link.addEventListener('auxclick', function (ev) {
+        if (ev.button === 1) {
+          try {
+            const tr = this.closest('tr');
+            const vid = tr?.dataset?.versionId;
+            if (vid) {
+              persistOpened(vid);
+              enableByVersionId(vid);
+            }
+          } catch (e) { /* ignore */ }
         }
-      })
-      .catch(err => {
-        console.error(err);
-        alert(err.message || 'Terjadi error. Cek console.');
-      })
-      .finally(() => {
-        btn.disabled = false;
-        btn.textContent = 'Submit Reject';
+      }, { passive: true });
+    });
+  }
+
+  // restore flags on page load
+  function applyPersistedFlags() {
+    qsa('tr[data-version-id]').forEach(tr => {
+      const vid = tr.dataset.versionId;
+      if (vid && isPersistedOpened(vid)) enableByVersionId(vid);
+    });
+  }
+
+  // Listen for postMessage from child tabs
+  window.addEventListener('message', function (ev) {
+    try {
+      const d = ev.data || {};
+      if (d && d.iso_action === 'version_opened' && d.version_id) {
+        enableByVersionId(String(d.version_id));
+        try { localStorage.setItem('iso_opened_version_' + String(d.version_id), '1'); } catch(e){}
+      }
+    } catch (e) { /* ignore */ }
+  }, false);
+
+  // Listen for storage events (across tabs)
+  window.addEventListener('storage', function (ev) {
+    if (!ev.key) return;
+    if (ev.key.startsWith('iso_opened_version_') && ev.newValue) {
+      const vid = ev.key.replace('iso_opened_version_', '');
+      enableByVersionId(vid);
+    }
+  });
+
+  // ---------- Approve guard ----------
+  function attachApproveGuards() {
+    qsa('form.action-form-approve').forEach(form => {
+      if (!markAttached(form, 'isoApproveGuard')) return;
+      form.addEventListener('submit', function (ev) {
+        const tr = this.closest('tr');
+        const vid = tr?.dataset?.versionId;
+        if (!vid) {
+          ev.preventDefault();
+          alert('Version ID tidak terdeteksi. Buka dokumen terlebih dahulu.');
+          return false;
+        }
+        if (!isPersistedOpened(vid)) {
+          ev.preventDefault();
+          alert('Silakan buka dokumen (Open) terlebih dahulu sebelum menyetujui.');
+          return false;
+        }
+        // otherwise allow normal submit
       });
     });
   }
 
-  // Select All checkbox
-  const selectAll = document.getElementById('selectAll');
-  if (selectAll) {
-    selectAll.addEventListener('change', (e) => {
-      document.querySelectorAll('.select-version').forEach(ch => ch.checked = e.target.checked);
+  // ---------- Reject modal (open + submit) ----------
+  function attachRejectButtons() {
+    qsa('.btn-reject').forEach(btn => {
+      if (!markAttached(btn, 'isoRejectAttached')) return;
+      btn.addEventListener('click', function () {
+        const tr = this.closest('tr');
+        const vid = tr?.dataset?.versionId;
+        const docCode = this.getAttribute('data-doc-code') || '';
+        if (!vid) { alert('Version ID tidak terdeteksi.'); return; }
+        if (!isPersistedOpened(vid)) { alert('Silakan buka dokumen (Open) terlebih dahulu sebelum menolak.'); return; }
+
+        const versionInput = qs('#reject_version_id');
+        const reasonTextarea = qs('#reject_reason');
+        const docLabel = qs('#rejectDocCode');
+
+        if (versionInput) versionInput.value = vid;
+        if (reasonTextarea) reasonTextarea.value = '';
+        if (docLabel) docLabel.textContent = docCode ? `(${docCode})` : '';
+
+        showRejectModal();
+      });
+    });
+
+    // modal show/close helpers (exposed)
+    window.showRejectModal = () => {
+      const el = qs('#rejectModal');
+      if (!el) return;
+      el.style.display = 'flex';
+      el.setAttribute('aria-hidden', 'false');
+      // focus textarea
+      setTimeout(() => { const t = qs('#reject_reason'); if (t) t.focus(); }, 50);
+    };
+    window.closeRejectModal = () => {
+      const el = qs('#rejectModal');
+      if (!el) return;
+      el.style.display = 'none';
+      el.setAttribute('aria-hidden', 'true');
+    };
+
+    // close on escape
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') {
+        const modal = qs('#rejectModal');
+        if (modal && modal.style.display === 'flex') closeRejectModal();
+      }
+    });
+
+    // submit reject
+    const rejectSubmitBtn = qs('#rejectSubmitBtn');
+    if (rejectSubmitBtn && markAttached(rejectSubmitBtn, 'isoRejectSubmit')) {
+      rejectSubmitBtn.addEventListener('click', function () {
+        const btn = this;
+        const vid = qs('#reject_version_id')?.value;
+        const reason = qs('#reject_reason')?.value?.trim();
+
+        if (!vid) { alert('Version ID tidak terdeteksi.'); return; }
+        if (!reason) { alert('Alasan reject wajib diisi.'); return; }
+
+        btn.disabled = true;
+        btn.textContent = 'Submitting...';
+
+        fetch(`${BASE_APPROVAL_URL}/${encodeURIComponent(vid)}/reject`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+            'X-CSRF-TOKEN': CSRF_TOKEN
+          },
+          body: JSON.stringify({ rejected_reason: reason })
+        })
+        .then(async res => {
+          const ct = res.headers.get('content-type') || '';
+          const payload = ct.includes('application/json') ? await res.json().catch(()=>({})) : {};
+          if (res.ok) {
+            closeRejectModal();
+            alert(payload.message || 'Version berhasil direject.');
+            window.location.reload();
+          } else {
+            throw new Error(payload.message || `Gagal menolak versi (${res.status})`);
+          }
+        })
+        .catch(err => {
+          console.error('Reject error', err);
+          alert(err.message || 'Terjadi error saat menolak. Cek console.');
+        })
+        .finally(() => {
+          btn.disabled = false;
+          btn.textContent = 'Submit Reject';
+        });
+      });
+    }
+  }
+
+  // ---------- Select All / Compare Selected ----------
+  function attachSelectAll() {
+    const selectAll = qs('#selectAll');
+    if (!selectAll || !markAttached(selectAll, 'isoSelectAll')) return;
+    selectAll.addEventListener('change', function () {
+      qsa('.select-version').forEach(cb => { cb.checked = this.checked; });
     });
   }
 
-  // Compare selected: require >=2 from same document
-  const compareBtn = document.getElementById('compareSelectedBtn');
-  if (compareBtn) {
-    compareBtn.addEventListener('click', () => {
-      const checked = Array.from(document.querySelectorAll('.select-version:checked'));
-      if (checked.length < 2) {
-        alert('Pilih minimal 2 versi dari dokumen yang sama untuk membandingkan.');
-        return;
-      }
+  function attachCompareSelected() {
+    const compareBtn = qs('#compareSelectedBtn');
+    if (!compareBtn || !markAttached(compareBtn, 'isoCompareSelected')) return;
+
+    compareBtn.addEventListener('click', function () {
+      const checked = qsa('.select-version:checked');
+      if (checked.length < 2) { alert('Pilih minimal 2 versi dari dokumen yang sama untuk membandingkan.'); return; }
 
       const docs = checked.map(c => c.dataset.doc);
       const firstDoc = docs[0];
       const allSame = docs.every(d => d === firstDoc);
-      if (!allSame) {
-        alert('Silakan pilih versi yang berasal dari DOKUMEN yang SAMA untuk membandingkan.');
-        return;
-      }
+      if (!allSame) { alert('Silakan pilih versi yang berasal dari DOKUMEN yang SAMA untuk membandingkan.'); return; }
 
       const versionIds = checked.map(c => c.value);
-      // build url: /documents/{docId}/compare?versions[]=7&versions[]=8
       const docId = firstDoc;
-      const base = "{{ rtrim(url('/documents'), '/') }}";
-      const url = new URL(`${base}/${encodeURIComponent(docId)}/compare`, window.location.origin);
+      const url = new URL(`${BASE_DOCUMENTS_URL}/${encodeURIComponent(docId)}/compare`, window.location.origin);
       versionIds.forEach(id => url.searchParams.append('versions[]', id));
       window.open(url.toString(), '_blank', 'noopener');
     });
   }
 
-  // Escape key closes modal
-  document.addEventListener('keydown', function (e) {
-    if (e.key === 'Escape') {
-      const modal = document.getElementById('rejectModal');
-      if (modal && modal.style.display === 'flex') closeRejectModal();
-    }
-  });
+  // ---------- initialization ----------
+  function init() {
+    attachOpenHandlers();
+    attachApproveGuards();
+    attachRejectButtons();
+    attachSelectAll();
+    attachCompareSelected();
+    applyPersistedFlags();
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+
+  // expose minimal API for debugging if needed
+  window.__isoApproval = {
+    enableByVersionId,
+    persistOpened,
+    applyPersistedFlags,
+  };
 
 })();
 </script>

@@ -21,6 +21,7 @@ class Kernel extends ConsoleKernel
           \App\Console\Commands\ImportDocsFromImportsFolder::class,
           \App\Console\Commands\ExtractMissingText::class,
           \App\Console\Commands\ReextractDocumentTextCommand::class,
+          \App\Console\Commands\ReExtractText::class,
           
     ];
 

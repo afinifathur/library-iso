@@ -20,15 +20,14 @@
 
     {{-- 
       IMPORTANT:
-      - Partial documents._form tetap tidak diubah.
-      - Kita akan menambahkan dropdown jenis pengajuan di luar partial (sebelum form fields).
-      - Partial diasumsikan merender <form ...> dan field lain.
+      - Partial documents._form tetap tidak diubah dari versi terakhir.
+      - Di sini kita tambahkan dropdown jenis pengajuan (kontrol utama).
     --}}
 
-    {{-- Block dropdown wajib: letakkan di create view (jangan ubah partial) --}}
+    {{-- Block dropdown wajib: letakkan di create view (kontrol utama) --}}
     <div class="mb-4">
-      <label for="upload_type" class="block text-sm font-medium text-gray-700">Jenis Pengajuan <span class="text-red-500">*</span></label>
-      <select id="upload_type" name="upload_type" class="mt-1 block w-full rounded border p-2" required>
+      <label for="upload_type_top" class="block text-sm font-medium text-gray-700">Jenis Pengajuan <span class="text-red-500">*</span></label>
+      <select id="upload_type_top" name="upload_type_top" class="mt-1 block w-full rounded border p-2" required>
         <option value="" selected>-- silahkan pilih jenis pengajuan (wajib) --</option>
         <option value="new">Dokumen Baru</option>
         <option value="replace">Ganti Versi Lama</option>
@@ -38,139 +37,150 @@
       </p>
     </div>
 
-    {{-- include existing form partial (partial tidak diubah) --}}
+    {{-- include existing form partial (partial merender <form> dan field lain) --}}
     @include('documents._form', compact('action','method','departments','categories','submitLabel'))
 
-    {{-- NOTE: partial harus merender sebuah <form>. Jika partial tidak merender form,
-              maka kamu harus memasukkan <form id="uploadForm" enctype="multipart/form-data" action="..." method="POST"> ...</form>
-              sendiri di sini. --}}
 </div>
 @endsection
+
 
 @section('scripts')
 @parent
 <script>
 document.addEventListener('DOMContentLoaded', function () {
-    const uploadType = document.getElementById('upload_type');
+    const topSelect = document.getElementById('upload_type_top'); // dropdown di create view
     const form = document.querySelector('form[action="{{ $action }}"]') || document.querySelector('form');
-
     if (!form) {
         console.warn('Form not found — pastikan documents._form merender <form>.');
         return;
     }
 
-    // Pastikan form punya id & enctype
-    form.id = form.id || 'uploadForm';
-    if (!form.enctype || form.enctype.toLowerCase() !== 'multipart/form-data') {
-        form.enctype = 'multipart/form-data';
-    }
+    // If partial included its own upload_type select (id="upload_type"), keep references
+    const partialSelect = form.querySelector('#upload_type'); // may exist inside partial
+    const mainSelect = partialSelect || topSelect; // primary control inside form (if exists)
+    const mainBtn = form.querySelector('#mainSubmitBtn'); // tombol utama di partial
+    const submitForHidden = form.querySelector('input[name="submit_for"]') || (function(){
+        const el = document.createElement('input'); el.type='hidden'; el.name='submit_for'; el.value = 'publish'; form.appendChild(el); return el;
+    })();
+    const modeHidden = form.querySelector('input[name="mode"]') || (function(){
+        const el = document.createElement('input'); el.type='hidden'; el.name='mode'; el.value = 'new'; form.appendChild(el); return el;
+    })();
 
-    // Sembunyikan tombol submit existing (biasanya ada dua)
-    const existingSubmitButtons = form.querySelectorAll('button[type="submit"], input[type="submit"]');
-    existingSubmitButtons.forEach(btn => {
-        btn.style.display = 'none';
-        btn.disabled = true;
-    });
-
-    // Buat wrapper dan single submit button
-    let submitWrapper = form.querySelector('#submit-wrapper');
-    if (!submitWrapper) {
-        submitWrapper = document.createElement('div');
-        submitWrapper.id = 'submit-wrapper';
-        submitWrapper.style.marginTop = '12px';
-        form.appendChild(submitWrapper);
-    }
-
-    let submitBtn = document.getElementById('submitBtn');
-    if (!submitBtn) {
-        submitBtn = document.createElement('button');
-        submitBtn.type = 'submit';
-        submitBtn.id = 'submitBtn';
-        submitBtn.className = 'btn btn-primary';
-        submitBtn.textContent = 'Simpan';
-        submitBtn.disabled = true;
-        submitWrapper.appendChild(submitBtn);
-    }
-
-    // helper hidden inputs
-    function ensureHidden(name, val) {
-        let inp = form.querySelector('input[name="'+name+'"]');
-        if (!inp) {
-            inp = document.createElement('input');
-            inp.type = 'hidden';
-            inp.name = name;
-            form.appendChild(inp);
+    // helper to set both partial select and top select (keamanan sync)
+    function setUploadType(value) {
+        if (partialSelect) {
+            partialSelect.value = value;
+            partialSelect.dispatchEvent(new Event('change', { bubbles: true }));
         }
-        if (typeof val !== 'undefined') inp.value = val;
-        return inp;
+        if (topSelect) {
+            topSelect.value = value;
+            topSelect.dispatchEvent(new Event('change', { bubbles: true }));
+        }
     }
 
-    // inisialisasi hidden if not exists
-    ensureHidden('submit_for', 'submit');
-    ensureHidden('mode', 'new');
+    // initialize based on old() values if present: try to read from partialSelect first
+    let initial = '';
+    // Try server-side old value rendered in partial's select (if any)
+    if (partialSelect && partialSelect.value) {
+        initial = partialSelect.value;
+    }
+    // else try top select (if user has preselected)
+    if (!initial && topSelect && topSelect.value) {
+        initial = topSelect.value;
+    }
+    // else use old submitted hidden input if exists
+    const hiddenSubmitForValue = form.querySelector('input[name="submit_for"]')?.value;
+    if (!initial && hiddenSubmitForValue) {
+        // derive upload_type from submit_for: if 'draft' or 'save' => replace; if 'publish'/'submit' => new
+        if (['draft','save'].includes(hiddenSubmitForValue)) initial = 'replace';
+        else initial = 'new';
+    }
 
-    function updateFromType() {
-        const v = uploadType ? uploadType.value : '';
-        const note = document.getElementById('submitNote');
+    if (initial) {
+        setUploadType(initial);
+    }
 
-        if (!v) {
-            submitBtn.disabled = true;
-            submitBtn.textContent = 'Simpan';
-            if (note) note.textContent = 'Pilih jenis pengajuan terlebih dahulu.';
+    // Update UI (button label + hidden inputs) according to chosen upload_type
+    function updateStateByType(v) {
+        if (!v || v === '') {
+            submitForHidden.value = 'publish';
+            modeHidden.value = 'new';
+            if (mainBtn) {
+                mainBtn.disabled = true;
+                mainBtn.textContent = 'Pilih jenis pengajuan dahulu';
+            }
             return;
         }
-        submitBtn.disabled = false;
 
         if (v === 'new') {
-            // default: publish
-            ensureHidden('submit_for', 'submit').value = 'submit';
-            ensureHidden('mode', 'new').value = 'new';
-            submitBtn.textContent = 'Simpan dan Publish';
-            if (note) note.textContent = 'Akan disimpan sebagai baseline (v1) dan langsung publish.';
+            submitForHidden.value = 'publish';
+            modeHidden.value = 'new';
+            if (mainBtn) {
+                mainBtn.disabled = false;
+                mainBtn.textContent = 'Save Baseline (v1) & Publish';
+            }
         } else if (v === 'replace') {
-            // saat replace -> set save (draft) supaya tidak langsung publish
-            ensureHidden('submit_for', 'save').value = 'save';
-            ensureHidden('mode', 'replace').value = 'replace';
-            submitBtn.textContent = 'Simpan sebagai Draft';
-            if (note) note.textContent = 'Akan disimpan sebagai draft dan masuk mekanisme approval.';
+            submitForHidden.value = 'draft';
+            modeHidden.value = 'replace';
+            if (mainBtn) {
+                mainBtn.disabled = false;
+                mainBtn.textContent = 'Save as Draft (New Version)';
+            }
         } else {
-            ensureHidden('submit_for', 'submit').value = 'submit';
-            ensureHidden('mode', v).value = v;
-            submitBtn.textContent = 'Simpan';
-            if (note) note.textContent = '';
+            // fallback
+            submitForHidden.value = 'publish';
+            modeHidden.value = v;
+            if (mainBtn) {
+                mainBtn.disabled = false;
+                mainBtn.textContent = 'Submit';
+            }
         }
     }
 
-    // add small note span
-    if (!document.getElementById('submitNote')) {
-        const span = document.createElement('span');
-        span.id = 'submitNote';
-        span.style.marginLeft = '12px';
-        span.style.color = '#6b7280';
-        submitWrapper.appendChild(span);
+    // wire change listeners: topSelect -> sync to partialSelect, partialSelect -> update UI
+    if (topSelect) {
+        topSelect.addEventListener('change', function (e) {
+            const v = e.target.value;
+            // propagate to partial select if exists
+            if (partialSelect) {
+                partialSelect.value = v;
+                partialSelect.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+            updateStateByType(v);
+        });
     }
 
-    if (uploadType) {
-        uploadType.addEventListener('change', updateFromType);
-        updateFromType();
-    } else {
-        console.warn('#upload_type tidak ditemukan di DOM.');
-        // enable submit only if hidden inputs already ter-set (defensive)
-        submitBtn.disabled = false;
+    if (partialSelect) {
+        partialSelect.addEventListener('change', function (e) {
+            const v = e.target.value;
+            // propagate to top select for visual consistency
+            if (topSelect) {
+                topSelect.value = v;
+            }
+            updateStateByType(v);
+        });
     }
 
-    // final check before submit
+    // If neither select exists (edge case), ensure button enabled
+    if (!topSelect && !partialSelect && mainBtn) {
+        mainBtn.disabled = false;
+    }
+
+    // Final guard before submit: require upload_type chosen
     form.addEventListener('submit', function (ev) {
-        if (uploadType && uploadType.value === '') {
+        const v = (partialSelect && partialSelect.value) || (topSelect && topSelect.value) || '';
+        if (!v) {
             ev.preventDefault();
             alert('Silakan pilih jenis pengajuan: Dokumen Baru atau Ganti Versi Lama.');
-            uploadType.focus();
+            if (topSelect) topSelect.focus();
             return false;
         }
-        // ensure hidden values valid (redundan)
-        updateFromType();
+        // ensure hidden synced
+        updateStateByType(v);
     });
+
+    // initial UI update
+    updateStateByType((partialSelect && partialSelect.value) || (topSelect && topSelect.value) || '');
 });
 </script>
 @endsection
-

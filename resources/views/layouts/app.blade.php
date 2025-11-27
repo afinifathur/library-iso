@@ -1,3 +1,4 @@
+{{-- resources/views/layouts/iso.blade.php --}}
 <!doctype html>
 <html lang="id">
 <head>
@@ -9,109 +10,87 @@
   <link rel="stylesheet" href="{{ asset('css/style.css') }}">
 
   <style>
-    /* General UI */
-    .card { border-radius:12px; box-shadow:0 6px 18px rgba(20,40,70,0.05); }
-    .table thead th { background:#f8fafc; border-bottom:1px solid #e6eef6; }
-    .btn { border-radius:8px; padding:.45rem .75rem; }
-    .btn-sm { padding:.25rem .6rem; font-size:.85rem; }
-    .table td, .table th { vertical-align:middle; }
-
-    .approval-actions .btn { margin-right:6px; }
-
-    .login-card .card { border:none; }
-    .login-card .form-control { border-radius:8px; padding:.6rem .75rem; }
-
-    .btn-primary { background:#1e88ff; border-color:#1e88ff; color:#fff; }
-    .btn-primary:hover { background:#166fe0; border-color:#166fe0; }
-
-    /* Header */
-    .site-header {
-      display:flex;
-      align-items:center;
-      justify-content:space-between;
-      padding:12px 18px;
-      border-bottom:1px solid #eef6fb;
-      background:#fff;
-      position:relative;
-      z-index:50;
+    /* -------------------------
+       Minimal layout styles
+       ------------------------- */
+    :root {
+      --accent: #1e88ff;
+      --muted: #6b7280;
+      --bg: #f7fbff;
+      --card-radius: 12px;
     }
 
+    html,body { height:100%; margin:0; font-family:Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; color:#0f172a; background:var(--bg); }
+
+    .card { border-radius:var(--card-radius); box-shadow:0 6px 18px rgba(20,40,70,0.05); background:#fff; }
+
+    /* header */
+    .site-header {
+      display:flex; align-items:center; justify-content:space-between;
+      padding:12px 18px; border-bottom:1px solid #eef6fb; background:#fff; z-index:50;
+    }
     .brand { display:flex; align-items:center; gap:12px; text-decoration:none; color:inherit; }
     .logo-img { width:46px; height:46px; border-radius:8px; object-fit:cover; }
     .brand-text .title { font-weight:700; font-size:16px; }
-    .brand-text .sub { font-size:12px; color:#6b7280; }
+    .brand-text .sub { font-size:12px; color:var(--muted); }
 
-    /* NAV LINKS */
     .main-nav { display:flex; gap:14px; align-items:center; }
-    .main-nav a {
-        padding:8px 12px;
-        border-radius:8px;
-        color:#0b5ed7;
-        text-decoration:none;
-        font-weight:500;
-    }
-    .main-nav a.active {
-        background:#eef7ff;
-        font-weight:600;
-    }
+    .main-nav a { padding:8px 12px; border-radius:8px; color:var(--accent); text-decoration:none; font-weight:500; }
+    .main-nav a.active { background:#eef7ff; font-weight:600; }
 
-    /* Dropdown (menu will be positioned fixed by JS) */
-    .dropdown-toggle {
-        background:transparent;
-        border:1px solid transparent;
-        padding:6px 10px;
-        border-radius:8px;
-        cursor:pointer;
-        color:#0b5ed7;
-        font-weight:500;
-    }
+    /* Buttons */
+    .btn { border-radius:8px; padding:.45rem .75rem; display:inline-flex; align-items:center; gap:.4rem; cursor:pointer; border:1px solid transparent; background:transparent; }
+    .btn-sm { padding:.25rem .6rem; font-size:.85rem; }
+    .btn-primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+    .btn-primary:hover { filter:brightness(.95); }
 
-    .dropdown-menu {
-        display:none;
-        background:#fff;
-        border:1px solid #d1d5db;
-        border-radius:6px;
-        min-width:140px;
-        box-shadow:0 6px 20px rgba(15,23,42,0.12);
-        position:fixed;
-        z-index:99999;
-    }
+    .btn-muted { background:#f3f6fb; border-color:transparent; color:#0f172a; }
 
-    .dropdown-menu button {
-        width:100%;
-        text-align:left;
-        padding:10px 14px;
-        border:none;
-        background:#fff;
-        font-size:14px;
-        cursor:pointer;
-    }
-    .dropdown-menu button:hover {
-        background:#eef7ff;
-        color:#0b5ed7;
-    }
+    .table { width:100%; border-collapse:collapse; }
+    .table thead th { background:#f8fafc; border-bottom:1px solid #e6eef6; padding:.6rem .75rem; text-align:left; }
+    .table td, .table th { padding:.6rem .75rem; vertical-align:middle; }
 
-    .footer-small { margin-top:18px; font-size:13px; color:#6b7280; text-align:center; padding:10px 0; }
-
-    .app-container { min-height:100vh; background:#f7fbff; }
-    .main-area { padding:18px; }
     .page-card { max-width:1200px; margin:0 auto; }
+
+    .footer-small { margin-top:18px; font-size:13px; color:var(--muted); text-align:center; padding:10px 0; }
+
+    /* Dropdown menu appended to body */
+    .dropdown-menu {
+      display:none;
+      background:#fff;
+      border:1px solid #d1d5db;
+      border-radius:6px;
+      min-width:160px;
+      box-shadow:0 6px 20px rgba(15,23,42,0.12);
+      position:fixed;
+      z-index:99999;
+    }
+    .dropdown-menu button {
+      width:100%; text-align:left; padding:10px 14px; border:none; background:transparent; font-size:14px; cursor:pointer;
+    }
+    .dropdown-menu button:hover { background:#eef7ff; color:var(--accent); }
+
+    /* Modal helper */
+    .modal-overlay { display:none; position:fixed; inset:0; align-items:center; justify-content:center; background:rgba(0,0,0,0.35); z-index:99998; }
+    .modal-card { background:#fff; border-radius:8px; padding:18px; width:90%; max-width:680px; }
 
     /* small responsive tweaks */
     @media (max-width:720px) {
       .main-nav { gap:8px; }
       .brand-text .title { font-size:15px; }
     }
+
+    /* small visual when row is opened */
+    .iso-opened-row { background: #f7fff4 !important; }
   </style>
 </head>
 
 <body>
-  <div class="app-container">
+  <div class="app-container" style="min-height:100vh;">
 
     {{-- NAVBAR (hidden on login route) --}}
     @if(!Request::is('login') && !Route::is('login'))
       <header class="site-header">
-
         {{-- Brand --}}
         <a href="{{ url('/') }}" class="brand" aria-label="Document Control — Management System">
           <img src="{{ asset('images/logo.png') }}" class="logo-img" alt="Logo">
@@ -152,11 +131,11 @@
             @endif
           @endauth
 
-          {{-- Drafts — kabag, admin, mr, director --}}
+          {{-- Drafts --}}
           @auth
             @php
-              $showDrafts = false;
               $u = auth()->user();
+              $showDrafts = false;
               if ($u) {
                   if (method_exists($u, 'hasAnyRole')) {
                       try { $showDrafts = $u->hasAnyRole(['kabag','admin','mr','director']); } catch (\Throwable $e) { $showDrafts = false; }
@@ -176,11 +155,11 @@
             @endif
           @endauth
 
-          {{-- Approval Queue — ONLY MR & DIRECTOR --}}
+          {{-- Approval Queue --}}
           @auth
             @php
-              $showApproval = false;
               $u = auth()->user();
+              $showApproval = false;
               if ($u) {
                   if (method_exists($u, 'hasAnyRole')) {
                       try { $showApproval = $u->hasAnyRole(['mr','director']); } catch (\Throwable $e) { $showApproval = false; }
@@ -200,11 +179,11 @@
             @endif
           @endauth
 
-          {{-- Recycle — ONLY MR/DIRECTOR/ADMIN and when route exists --}}
+          {{-- Recycle --}}
           @auth
             @php
-              $showRecycle = false;
               $u = auth()->user();
+              $showRecycle = false;
               if ($u) {
                   if (method_exists($u, 'hasAnyRole')) {
                       try { $showRecycle = $u->hasAnyRole(['mr','director','admin']); } catch (\Throwable $e) { $showRecycle = false; }
@@ -221,14 +200,12 @@
 
             @if($showRecycle && Route::has('recycle.index'))
               <a href="{{ route('recycle.index') }}" class="{{ request()->routeIs('recycle.*') ? 'active' : '' }}" title="Recycle Bin" aria-label="Recycle Bin" style="display:inline-flex;align-items:center;gap:8px;">
-                {{-- small trash icon --}}
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                   <rect x="3" y="6" width="18" height="14" rx="2" fill="#e6f0ff"/>
                   <path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2" stroke="#1e88ff" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
                   <path d="M8 10v6M12 10v6M16 10v6" stroke="#1e88ff" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
                   <rect x="7" y="4" width="10" height="2" rx="1" fill="#1e88ff"/>
                 </svg>
-                <span style="font-weight:500;color:#0b5ed7;"></span>
               </a>
             @endif
           @endauth
@@ -250,7 +227,7 @@
       </header>
     @endif
 
-    {{-- Flash messages (non-JS fallback; JS SweetAlert also will show if available) --}}
+    {{-- Flash messages (non-JS fallback) --}}
     <div class="container-messages" style="max-width:1200px;margin:12px auto;">
       @if(session('success'))
         <div style="margin-bottom:12px;padding:10px;border-radius:8px;background:#ecfdf5;color:#064e3b;">{{ session('success') }}</div>
@@ -263,8 +240,8 @@
       @endif
     </div>
 
-    {{-- CONTENT --}}
-    <main class="main-area">
+    {{-- MAIN CONTENT --}}
+    <main class="main-area" style="padding:18px;">
       <div class="page-card">
         @yield('content')
       </div>
@@ -273,42 +250,39 @@
     </main>
   </div>
 
-  {{-- Hidden logout form (dipanggil oleh JS menu) --}}
-  <form id="logout-form" action="{{ route('logout') }}" method="POST" style="display:none;">
-    @csrf
-  </form>
+  {{-- Hidden logout form --}}
+  <form id="logout-form" action="{{ route('logout') }}" method="POST" style="display:none;">@csrf</form>
 
-  {{-- allow pages to push scripts here --}}
+  {{-- allow pages to push scripts (backward-compatible) --}}
   @yield('scripts')
+  @stack('scripts')
 
-  {{-- include SweetAlert2 CDN (hanya sekali di layout) --}}
+  {{-- SweetAlert2 --}}
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 
-  {{-- Dropdown & Toast/Modal handlers --}}
+  {{-- Dropdown, SweetAlert flashes, and global approval helper --}}
   <script>
-    document.addEventListener("DOMContentLoaded", function () {
-      /* ---------- DROPDOWN MENU (pindahkan ke body, tidak menyisipkan Blade ke string) ---------- */
+  (function () {
+    // --------- Dropdown menu (appended to body) ----------
+    document.addEventListener('DOMContentLoaded', function () {
       const dropdown = document.querySelector('.dropdown');
       if (dropdown) {
         const toggle = dropdown.querySelector('.dropdown-toggle');
 
-        // create standalone menu appended to body
         const menu = document.createElement('div');
         menu.className = 'dropdown-menu';
         menu.style.display = 'none';
 
-        // Build menu content safely
-        // Profile link (if route exists)
+        // Profile link
         @if(Route::has('profile.edit'))
           const profileBtn = document.createElement('button');
           profileBtn.type = 'button';
           profileBtn.textContent = 'Profile';
-          profileBtn.addEventListener('click', function () {
-            window.location = @json(route('profile.edit'));
-          });
+          profileBtn.addEventListener('click', function () { window.location = @json(route('profile.edit')); });
           menu.appendChild(profileBtn);
         @endif
 
+        // Logout
         const logoutBtn = document.createElement('button');
         logoutBtn.type = 'button';
         logoutBtn.textContent = 'Logout';
@@ -323,15 +297,12 @@
 
         function positionMenu() {
           const rect = toggle.getBoundingClientRect();
-          // position menu under toggle, adjust if overflow
-          menu.style.left = (Math.max(8, rect.right - menu.offsetWidth)) + 'px';
+          menu.style.left = Math.max(8, rect.right - menu.offsetWidth) + 'px';
           menu.style.top = (rect.bottom + 8) + 'px';
 
           const maxRight = window.innerWidth - 8;
           const menuRight = parseFloat(menu.style.left) + menu.offsetWidth;
-          if (menuRight > maxRight) {
-            menu.style.left = Math.max(8, maxRight - menu.offsetWidth) + 'px';
-          }
+          if (menuRight > maxRight) menu.style.left = Math.max(8, maxRight - menu.offsetWidth) + 'px';
 
           const menuBottom = rect.bottom + 8 + menu.offsetHeight;
           if (menuBottom > window.innerHeight - 8) {
@@ -342,68 +313,131 @@
 
         toggle.addEventListener('click', function (e) {
           e.stopPropagation();
-          if (menu.style.display === 'block') {
-            menu.style.display = 'none';
-          } else {
-            positionMenu();
-            menu.style.display = 'block';
-          }
+          if (menu.style.display === 'block') { menu.style.display = 'none'; }
+          else { positionMenu(); menu.style.display = 'block'; }
         });
 
-        // close on outside click or escape
         document.addEventListener('click', function (e) {
-          if (!menu.contains(e.target) && !toggle.contains(e.target)) {
-            menu.style.display = 'none';
-          }
+          if (!menu.contains(e.target) && !toggle.contains(e.target)) menu.style.display = 'none';
         });
 
-        document.addEventListener('keydown', function (e) {
-          if (e.key === 'Escape') menu.style.display = 'none';
-        });
+        document.addEventListener('keydown', function (e) { if (e.key === 'Escape') menu.style.display = 'none'; });
 
         window.addEventListener('resize', function () { if (menu.style.display === 'block') positionMenu(); }, { passive: true });
         window.addEventListener('scroll', function () { if (menu.style.display === 'block') positionMenu(); }, { passive: true });
       }
 
-      /* ---------- SWEETALERT FLASH HANDLING ---------- */
+      // --------- SweetAlert flash messages ----------
       @if(session('success'))
-        Swal.fire({
-            icon: 'success',
-            title: 'Berhasil',
-            text: @json(session('success')),
-            timer: 2500,
-            timerProgressBar: true,
-            toast: true,
-            position: 'top-end',
-            showConfirmButton: false
-        });
+        Swal.fire({ icon:'success', title:'Berhasil', text:@json(session('success')), toast:true, position:'top-end', showConfirmButton:false, timer:2500, timerProgressBar:true });
       @endif
-
       @if(session('error'))
-        Swal.fire({
-            icon: 'error',
-            title: 'Perhatian',
-            text: @json(session('error')),
-            confirmButtonText: 'Tutup'
-        });
+        Swal.fire({ icon:'error', title:'Perhatian', text:@json(session('error')), confirmButtonText:'Tutup' });
       @endif
-
       @if(session('pending'))
         Swal.fire({
-          icon: 'warning',
-          title: 'Pending',
-          text: @json(session('pending')),
-          showCancelButton: true,
-          confirmButtonText: 'Lihat Antrian',
-          cancelButtonText: 'Tutup'
-        }).then(result => {
-          if (result.isConfirmed) {
-            window.location = @json(route('approval.index'));
-          }
-        });
+          icon:'warning', title:'Pending', text:@json(session('pending')), showCancelButton:true,
+          confirmButtonText:'Lihat Antrian', cancelButtonText:'Tutup'
+        }).then(result => { if (result.isConfirmed) window.location = @json(route('approval.index')); });
       @endif
-
     });
+
+    // --------- Global approval helper ----------
+    (function () {
+      // small helper to enable approve/reject on a row when an "Open" link is clicked
+      function enableRowForVersion(vid) {
+        if (!vid) return;
+        document.querySelectorAll('tr[data-version-id="'+vid+'"]').forEach(tr => {
+          tr.classList.add('iso-opened-row');
+          tr.querySelectorAll('.btn-approve, .btn-reject').forEach(btn => { btn.removeAttribute('disabled'); btn.removeAttribute('aria-disabled'); });
+          tr.querySelectorAll('.select-version').forEach(cb => cb.disabled = false);
+        });
+      }
+
+      function attachOpenHandlers() {
+        document.querySelectorAll('.action-open').forEach(link => {
+          if (link.__isoAttached) return;
+          link.__isoAttached = true;
+
+          link.addEventListener('click', function () {
+            try {
+              const tr = this.closest('tr');
+              const vid = tr?.dataset?.versionId || this.dataset?.versionId;
+              if (!vid) return;
+              try { localStorage.setItem('iso_opened_version_' + vid, '1'); } catch(e){}
+              enableRowForVersion(String(vid));
+              try {
+                if (window.opener && !window.opener.closed) {
+                  window.opener.postMessage({ iso_action:'version_opened', version_id:String(vid) }, '*');
+                }
+              } catch(e){}
+            } catch(e){ console.warn('iso:open error', e); }
+            // allow navigation (open in new tab)
+          }, { passive:true });
+
+          // support middle-click
+          link.addEventListener('auxclick', function (ev) { if (ev.button === 1) {
+            const tr = this.closest('tr');
+            const vid = tr?.dataset?.versionId || this.dataset?.versionId;
+            if (vid) { try { localStorage.setItem('iso_opened_version_' + vid, '1'); } catch(e){}; enableRowForVersion(String(vid)); }
+          }}, { passive:true });
+        });
+      }
+
+      // Listen for postMessage from child tab
+      window.addEventListener('message', function (ev) {
+        try {
+          const d = ev.data || {};
+          if (d && d.iso_action === 'version_opened' && d.version_id) enableRowForVersion(String(d.version_id));
+        } catch (e) {}
+      });
+
+      // Listen for storage events
+      window.addEventListener('storage', function (ev) {
+        if (!ev.key) return;
+        if (ev.key.startsWith('iso_opened_version_') && ev.newValue) {
+          const vid = ev.key.replace('iso_opened_version_', '');
+          enableRowForVersion(vid);
+        }
+      });
+
+      // Guard approve forms: require localStorage flag
+      function attachApproveGuards() {
+        document.querySelectorAll('form.action-form-approve').forEach(form => {
+          if (form.__isoGuard) return;
+          form.__isoGuard = true;
+          form.addEventListener('submit', function (e) {
+            try {
+              const tr = this.closest('tr');
+              const vid = tr?.dataset?.versionId;
+              if (!vid) return;
+              const opened = !!localStorage.getItem('iso_opened_version_' + vid);
+              if (!opened) { e.preventDefault(); alert('Silakan buka dokumen (Open) terlebih dahulu sebelum menyetujui.'); return false; }
+            } catch(err){ console.error(err); }
+          });
+        });
+      }
+
+      // Initialize
+      function init() {
+        attachOpenHandlers();
+        attachApproveGuards();
+
+        // apply persisted flags
+        document.querySelectorAll('tr[data-version-id]').forEach(tr => {
+          const v = tr.dataset.versionId;
+          try { if (localStorage.getItem('iso_opened_version_' + v)) enableRowForVersion(String(v)); } catch(e){}
+        });
+      }
+
+      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+      else init();
+
+      // expose minimal API for debugging
+      window.__isoApprovalHelper = { enableRowForVersion, attachOpenHandlers, attachApproveGuards };
+    })();
+
+  })();
   </script>
 
 </body>

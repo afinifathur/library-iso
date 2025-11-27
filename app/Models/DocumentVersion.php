@@ -5,113 +5,139 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasOne;
+use Illuminate\Support\Facades\DB;
+use Carbon\Carbon;
 
 class DocumentVersion extends Model
 {
-    // Jika kamu menggunakan guarded, kamu bisa ganti dengan protected $guarded = [];
     protected $fillable = [
-        'document_id',
-        'version_label',
-        'status',
-        'approval_stage',     // stage saat ini (KABAG / MR / DIRECTOR / DONE)
-        'created_by',
-        'file_path',
-        'file_mime',
-        'checksum',
-        'change_note',
-        'signed_by',
-        'signed_at',
-        'plain_text',
-        'pasted_text',
-        'diff_summary',
-        'summary_changed',
-        'prev_version_id',
-        // approval / audit fields (opsional — tambahkan jika kolom ada)
-        'approval_note',
-        'approval_notes',
-        'approved_by',
-        'approved_at',
-        'rejected_by',
-        'rejected_at',
-        'reject_reason',
+        'document_id','version_label','status','approval_stage','created_by',
+        'file_path','file_mime','checksum','change_note','signed_by','signed_at',
+        'plain_text','pasted_text','diff_summary','summary_changed','prev_version_id',
+        'approval_note','approval_notes','approved_by','approved_at',
+        'rejected_by','rejected_at','reject_reason','rejected_reason',
+        'submitted_by','submitted_at'
     ];
 
     protected $casts = [
         'signed_at'     => 'datetime',
         'approved_at'   => 'datetime',
         'rejected_at'   => 'datetime',
+        'submitted_at'  => 'datetime',
         'created_at'    => 'datetime',
         'updated_at'    => 'datetime',
         'diff_summary'  => 'array',
     ];
 
-    /**
-     * Versi ini milik 1 dokumen.
-     */
     public function document(): BelongsTo
     {
         return $this->belongsTo(Document::class, 'document_id');
     }
 
-    /**
-     * Ambil department lewat relasi document (helper sederhana).
-     * Contoh penggunaan: $version->document->department
-     * (tidak perlu method tersendiri, tapi bisa dibuat accessor jika sering digunakan)
-     */
-
-    /**
-     * Versi sebelumnya (jika ada).
-     */
     public function prevVersion(): BelongsTo
     {
         return $this->belongsTo(self::class, 'prev_version_id');
     }
 
-    /**
-     * Versi selanjutnya (jika ada).
-     *
-     * Catatan: 'hasOne' valid karena versi lain akan menyimpan prev_version_id pointing ke current.
-     * Alternatif: gunakan belongsToMany/self-relasi jika struktur berbeda.
-     */
     public function nextVersion(): HasOne
     {
         return $this->hasOne(self::class, 'prev_version_id');
     }
 
-    /**
-     * User yang membuat versi ini.
-     * Alias 'creator' dan 'created_by_user' berguna di controller/view.
-     */
     public function creator(): BelongsTo
     {
         return $this->belongsTo(User::class, 'created_by');
     }
 
-    /**
-     * Alias yang beberapa view/controller gunakan.
-     */
-    public function created_by_user(): BelongsTo
+    /* ---------------------------
+       Scopes
+       --------------------------- */
+
+    public function scopeDrafts($q)
     {
-        return $this->belongsTo(User::class, 'created_by');
+        return $q->whereIn('status', ['draft','rejected']);
+    }
+
+    public function scopePendingMR($q)
+    {
+        return $q->where('status','submitted')->where('approval_stage','MR');
+    }
+
+    public function scopePendingDirector($q)
+    {
+        return $q->where('status','submitted')->where('approval_stage','DIRECTOR');
     }
 
     /* ---------------------------
-       Query scopes (optional)
+       Approval helpers
        --------------------------- */
 
-    /**
-     * Scope: versi yang sedang pending / menunggu approval.
-     */
-    public function scopePending($query)
+    public function markSubmitted($userId = null, $nextStage = 'MR')
     {
-        return $query->whereIn('status', ['submitted', 'under_review', 'draft']);
+        $this->status = 'submitted';
+        $this->approval_stage = $nextStage;
+        $this->submitted_by = $userId;
+        $this->submitted_at = Carbon::now();
+        $this->save();
     }
 
-    /**
-     * Scope: versi yang aktif / approved.
-     */
-    public function scopeApproved($query)
+    public function approveByMR($userId = null)
     {
-        return $query->where('status', 'approved');
+        // move to director
+        $this->status = 'submitted';
+        $this->approval_stage = 'DIRECTOR';
+        $this->rejected_reason = null;
+        $this->rejected_by = null;
+        $this->rejected_at = null;
+        $this->save();
+    }
+
+    public function approveByDirector($userId = null)
+    {
+        DB::transaction(function () use ($userId) {
+            $this->status = 'approved';
+            $this->approval_stage = 'DONE';
+            $this->approved_by = $userId;
+            $this->approved_at = Carbon::now();
+            $this->rejected_reason = null;
+            $this->rejected_by = null;
+            $this->rejected_at = null;
+            $this->save();
+
+            // promote to document current version
+            $doc = $this->document()->lockForUpdate()->first();
+            if ($doc) {
+                if ($doc->current_version_id && $doc->current_version_id != $this->id) {
+                    $old = self::find($doc->current_version_id);
+                    if ($old && ! in_array($old->status, ['approved','rejected','superseded'], true)) {
+                        $old->status = 'superseded';
+                        $old->save();
+                    }
+                }
+                if (schemaHasColumn($doc->getTable(), 'current_version_id')) {
+                    $doc->current_version_id = $this->id;
+                } else {
+                    $doc->current_version_id = $this->id;
+                }
+                if (schemaHasColumn($doc->getTable(), 'revision_date')) {
+                    $doc->revision_date = $this->approved_at;
+                } else {
+                    $doc->revision_date = $this->approved_at;
+                }
+                $doc->approved_by = $userId;
+                $doc->approved_at = $this->approved_at;
+                $doc->save();
+            }
+        });
+    }
+
+    public function rejectByRole(string $reason = null, $userId = null)
+    {
+        $this->status = 'rejected';
+        $this->approval_stage = 'KABAG';
+        $this->rejected_reason = $reason;
+        $this->rejected_by = $userId;
+        $this->rejected_at = Carbon::now();
+        $this->save();
     }
 }

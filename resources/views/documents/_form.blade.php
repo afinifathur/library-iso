@@ -1,5 +1,7 @@
 {{-- resources/views/documents/_form.blade.php --}}
 {{-- Partial form untuk create / edit document --}}
+<!-- ISO-FORM-PARTIAL-LOADED -->
+
 
 <form method="POST"
       action="{{ $action }}"
@@ -11,19 +13,34 @@
         @method($method)
     @endif
 
+    {{-- Hidden control fields (required by controller) --}}
+    <input type="hidden" name="submit_for" value="{{ old('submit_for', 'publish') }}">
+    <input type="hidden" name="mode" id="upload_type" value="{{ old('upload_type', '') }}">
+
     {{-- CATEGORY --}}
     <div class="form-row">
         <label class="small-muted">Category</label>
         <select name="category_id" class="form-input" required>
             <option value="">-- pilih kategori --</option>
-            @foreach($categories ?? [] as $cat)
-                @php
-                    $selectedCategory = old('category_id', $document->category_id ?? null);
-                @endphp
-                <option value="{{ $cat->id }}" {{ $selectedCategory == $cat->id ? 'selected' : '' }}>
-                    {{ $cat->code ?? $cat->name }}
-                </option>
-            @endforeach
+            @php
+                $selectedCategory = old('category_id', $document->category_id ?? null);
+            @endphp
+            @if(!empty($categories) && count($categories) > 0)
+                @foreach($categories as $cat)
+                    <option value="{{ $cat->id }}" {{ (string)$selectedCategory === (string)$cat->id ? 'selected' : '' }}>
+                        {{ $cat->code ?? $cat->name ?? $cat->id }}
+                    </option>
+                @endforeach
+            @else
+                {{-- fallback: jika tidak ada model Category, tampilkan beberapa kode umum --}}
+                <option value="IK" {{ $selectedCategory === 'IK' ? 'selected' : '' }}>IK - Instruksi Kerja</option>
+                <option value="UT" {{ $selectedCategory === 'UT' ? 'selected' : '' }}>UT - Uraian Tugas</option>
+                <option value="FR" {{ $selectedCategory === 'FR' ? 'selected' : '' }}>FR - Formulir</option>
+                <option value="PJM" {{ $selectedCategory === 'PJM' ? 'selected' : '' }}>PJM - Prosedur Jaminan Mutu</option>
+                <option value="MJM" {{ $selectedCategory === 'MJM' ? 'selected' : '' }}>MJM - Manual Jaminan Mutu</option>
+                <option value="DP" {{ $selectedCategory === 'DP' ? 'selected' : '' }}>DP - Dokumen Pendukung</option>
+                <option value="DE" {{ $selectedCategory === 'DE' ? 'selected' : '' }}>DE - Dokumen Eksternal</option>
+            @endif
         </select>
         @error('category_id')
             <div class="small-muted text-danger">{{ $message }}</div>
@@ -39,7 +56,7 @@
                 @php
                     $selectedDept = old('department_id', $document->department_id ?? null);
                 @endphp
-                <option value="{{ $d->id }}" {{ $selectedDept == $d->id ? 'selected' : '' }}>
+                <option value="{{ $d->id }}" {{ (string)$selectedDept === (string)$d->id ? 'selected' : '' }}>
                     {{ $d->code }} — {{ $d->name }}
                 </option>
             @endforeach
@@ -80,9 +97,8 @@
         <label class="small-muted">Dokumen terkait (lampiran, form dll) (satu URL per baris)</label>
 
         @php
-            // default value untuk edit: implode array related_links jadi multiline string
-            $relatedLinksDefault = '';
-            if (isset($document) && is_array($document->related_links)) {
+            $relatedLinksDefault = old('related_links', '');
+            if ($relatedLinksDefault === '' && isset($document) && is_array($document->related_links)) {
                 $relatedLinksDefault = implode("\n", $document->related_links);
             }
         @endphp
@@ -90,7 +106,7 @@
         <textarea name="related_links"
                   rows="4"
                   class="form-textarea"
-                  placeholder="http://...">{{ old('related_links', $relatedLinksDefault) }}</textarea>
+                  placeholder="http://...">{{ $relatedLinksDefault }}</textarea>
 
         <div class="small-muted">
             Masukkan URL/hyperlink dokumen terkait, satu baris = satu link.<br>
@@ -161,8 +177,8 @@
     <div class="form-row">
         <label class="small-muted">Pasted text (optional)</label>
         @php
-            $pastedDefault = '';
-            if (isset($document)) {
+            $pastedDefault = old('pasted_text', '');
+            if ($pastedDefault === '' && isset($document)) {
                 $pastedDefault = optional(
                     $document->relationLoaded('currentVersion')
                         ? $document->currentVersion
@@ -172,7 +188,7 @@
         @endphp
         <textarea name="pasted_text"
                   rows="8"
-                  class="form-textarea">{{ old('pasted_text', $pastedDefault) }}</textarea>
+                  class="form-textarea">{{ $pastedDefault }}</textarea>
         @error('pasted_text')
             <div class="small-muted text-danger">{{ $message }}</div>
         @enderror
@@ -183,7 +199,7 @@
         <label class="small-muted">Change note (optional)</label>
         <textarea name="change_note"
                   rows="3"
-                  class="form-textarea">{{ old('change_note') }}</textarea>
+                  class="form-textarea">{{ old('change_note', '') }}</textarea>
     </div>
 
     {{-- hidden metadata fields (optional) --}}
@@ -191,25 +207,75 @@
     <input type="hidden" name="approved_by" value="{{ old('approved_by', $document->approved_by ?? '') }}">
 
     {{-- BUTTONS --}}
-    <div style="margin-top:16px; display:flex; gap:10px;">
+    <div style="margin-top:16px; display:flex; gap:10px; align-items:center;">
 
-    {{-- PUBLISH BUTTON (default for New Document) --}}
-    <button class="btn btn-primary"
-            id="publish-btn"
-            type="submit"
-            name="submit_for"
-            value="publish">
-        Save Baseline (v1) & Publish
-    </button>
+        {{-- PUBLISH BUTTON (default for New Document) --}}
+        <button class="btn btn-primary"
+                id="publish-btn"
+                type="button"
+                data-submit="publish">
+            Save Baseline (v1) & Publish
+        </button>
 
-    {{-- DRAFT BUTTON (only appears when selecting "Replace Version") --}}
-    <button class="btn btn-warning"
-            id="draft-btn"
-            type="submit"
-            name="submit_for"
-            value="draft">
-        Save as Draft (New Version)
-    </button>
+        {{-- DRAFT BUTTON (only appears when selecting "Replace Version") --}}
+        <button class="btn btn-warning"
+                id="draft-btn"
+                type="button"
+                data-submit="draft">
+            Save as Draft (New Version)
+        </button>
 
-</div>
+        {{-- optional cancel for modal flows --}}
+        <button type="button" id="cancelBtnForm" class="btn btn-muted" style="margin-left:auto; display:none;">Cancel</button>
+    </div>
 </form>
+
+{{-- small inline script to wire the two buttons to set hidden input and submit --}}
+<script>
+(function () {
+    try {
+        const form = document.currentScript ? document.currentScript.closest('form') : document.querySelector('form');
+        // robust: locate the form containing this partial
+        const publishBtn = document.getElementById('publish-btn');
+        const draftBtn = document.getElementById('draft-btn');
+        const submitFor = form ? form.querySelector('input[name="submit_for"]') : null;
+        const modeInput = form ? form.querySelector('input[name="mode"], input[name="upload_type"], input#upload_type') : null;
+        const cancelBtn = document.getElementById('cancelBtnForm');
+
+        function doSubmit(val) {
+            if (submitFor) submitFor.value = val;
+            // set mode for server compatibility
+            if (modeInput) modeInput.value = (val === 'draft' ? 'replace' : 'new');
+            // final submit
+            if (form) form.submit();
+        }
+
+        if (publishBtn) {
+            publishBtn.addEventListener('click', function (e) {
+                doSubmit(this.dataset.submit || 'publish');
+            });
+        }
+        if (draftBtn) {
+            draftBtn.addEventListener('click', function (e) {
+                doSubmit(this.dataset.submit || 'draft');
+            });
+        }
+
+        // if the form is shown as a modal in other pages, show cancel button to close modal
+        // detect a modal container with id editModal
+        const modal = document.getElementById('editModal');
+        if (modal && cancelBtn) {
+            cancelBtn.style.display = 'inline-block';
+            cancelBtn.addEventListener('click', function () {
+                modal.style.display = 'none';
+            });
+        } else if (cancelBtn) {
+            // hide cancel if not modal
+            cancelBtn.style.display = 'none';
+        }
+    } catch (e) {
+        // ignore to avoid breaking UI
+        console.warn('form wiring error', e);
+    }
+})();
+</script>

@@ -13,6 +13,23 @@ use App\Http\Controllers\RecycleController;
 
 /*
 |--------------------------------------------------------------------------
+| Web Routes
+|--------------------------------------------------------------------------
+|
+| Clean, ready-to-paste routes file for the Library-ISO application.
+| Organization:
+|  - Public (guest) routes
+|  - Authenticated routes
+|  - Public departments routes
+|  - Optional external route file
+|
+*/
+
+/** Root redirect */
+Route::redirect('/', '/login');
+
+/*
+|--------------------------------------------------------------------------
 | Public / Guest Routes
 |--------------------------------------------------------------------------
 */
@@ -24,11 +41,14 @@ Route::middleware('guest')->group(function () {
     Route::post('/register', [AuthController::class, 'register'])->name('register.attempt');
 });
 
+/*
+|--------------------------------------------------------------------------
+| Logout (requires auth)
+|--------------------------------------------------------------------------
+*/
 Route::post('/logout', [AuthController::class, 'logout'])
     ->middleware('auth')
     ->name('logout');
-
-Route::get('/', fn () => redirect()->route('login'));
 
 /*
 |--------------------------------------------------------------------------
@@ -46,31 +66,35 @@ Route::middleware('auth')->group(function () {
     |--------------------------------------------------------------------------
     */
     Route::prefix('documents')->name('documents.')->group(function () {
-        Route::get('',            [DocumentController::class, 'index'])->name('index');
-        Route::get('create',      [DocumentController::class, 'create'])->name('create');
-        Route::post('',           [DocumentController::class, 'store'])->name('store');
-        Route::post('upload-pdf', [DocumentController::class, 'uploadPdf'])->name('uploadPdf');
+        Route::get('',                 [DocumentController::class, 'index'])->name('index');
+        Route::get('create',           [DocumentController::class, 'create'])->name('create');
+        Route::post('',                [DocumentController::class, 'store'])->name('store');
+        Route::post('upload-pdf',      [DocumentController::class, 'uploadPdf'])->name('uploadPdf');
 
-        Route::get('{document}',         [DocumentController::class, 'show'])
+        Route::get('{document}',       [DocumentController::class, 'show'])
             ->whereNumber('document')->name('show');
 
-        Route::get('{document}/compare', [DocumentController::class, 'compare'])
+        Route::get('{document}/compare',[DocumentController::class, 'compare'])
             ->whereNumber('document')->name('compare');
 
-        Route::get('{document}/edit',    [DocumentController::class, 'edit'])
+        Route::get('{document}/edit',  [DocumentController::class, 'edit'])
             ->whereNumber('document')->name('edit');
 
-        Route::put('{document}',         [DocumentController::class, 'updateCombined'])
+        Route::put('{document}',       [DocumentController::class, 'updateCombined'])
             ->whereNumber('document')->name('updateCombined');
 
-        // versions related to documents (named as documents.versions.download)
+        // Download specific version (PDF)
         Route::get('versions/{version}/download', [DocumentController::class, 'downloadVersion'])
             ->whereNumber('version')->name('versions.download');
+
+        // Download master (doc / docx) for a version
+        Route::get('versions/{version}/download-master', [DocumentController::class, 'downloadMaster'])
+            ->whereNumber('version')->name('versions.downloadMaster');
     });
 
     /*
     |--------------------------------------------------------------------------
-    | Categories
+    | Categories (read-only list)
     |--------------------------------------------------------------------------
     */
     Route::get('/categories', [CategoryController::class, 'index'])->name('categories.index');
@@ -96,26 +120,24 @@ Route::middleware('auth')->group(function () {
         Route::put('{version}',                [DocumentVersionController::class, 'update'])
             ->whereNumber('version')->name('update');
 
-        // Optional: choose compare
         Route::get('{version}/choose-compare', [DocumentVersionController::class, 'chooseCompare'])
             ->whereNumber('version')->name('chooseCompare');
 
-        /*
-        |------------------------------------------------------------------
-        | Versions trash (mark trashed) - kept inside versions group so name is
-        | versions.trash and parameter constraints remain consistent.
-        | Controller should check authorization (role/ownership) as needed.
-        |------------------------------------------------------------------
-        */
+        // Mark version as trashed (controller handles authorization)
         Route::post('{version}/trash',         [DocumentController::class, 'trashVersion'])
             ->whereNumber('version')->name('trash');
     });
+
+    // OPTIONAL: preview route for documents versions (used by PDF viewer/iframe)
+    // This route is placed inside the auth group as requested.
+    Route::get('documents/versions/{version}/preview', [DocumentController::class, 'previewVersion'])
+        ->whereNumber('version')
+        ->name('documents.versions.preview');
 
     /*
     |--------------------------------------------------------------------------
     | Drafts
     |--------------------------------------------------------------------------
-    | Konsistenkan semua route drafts di sini (hindari duplikasi).
     */
     Route::prefix('drafts')->name('drafts.')->group(function () {
         Route::get('/',                          [DraftController::class, 'index'])->name('index');
@@ -126,14 +148,15 @@ Route::middleware('auth')->group(function () {
         Route::get('{version}/edit',             [DraftController::class, 'edit'])
             ->whereNumber('version')->name('edit');
 
-        // prefer DELETE if possible; keep POST for compatibility with HTML forms
-        Route::post('{version}/delete',          [DraftController::class, 'destroy'])
+        // prefer DELETE, but POST kept for HTML form compatibility
+        Route::delete('{version}',               [DraftController::class, 'destroy'])
             ->whereNumber('version')->name('destroy');
+        Route::post('{version}/delete',          [DraftController::class, 'destroy'])
+            ->whereNumber('version')->name('destroy.post');
 
         Route::post('{version}/submit',          [DraftController::class, 'submit'])
             ->whereNumber('version')->name('submit');
 
-        // Optional reopen (jika fitur diperlukan)
         Route::post('{version}/reopen',          [DraftController::class, 'reopen'])
             ->whereNumber('version')->name('reopen');
     });
@@ -144,9 +167,11 @@ Route::middleware('auth')->group(function () {
     |--------------------------------------------------------------------------
     */
     Route::prefix('approval')->name('approval.')->group(function () {
-        // Pertimbangkan menambahkan middleware('role:mr|director') jika diperlukan.
+        // Consider adding role-based middleware when needed:
+        // ->middleware('role:mr|director|kabag|admin')
         Route::get('',                           [ApprovalController::class, 'index'])->name('index');
 
+        // view single version in approval flow
         Route::get('{version}/view',             [ApprovalController::class, 'view'])
             ->whereNumber('version')->name('view');
 
@@ -157,25 +182,24 @@ Route::middleware('auth')->group(function () {
             ->whereNumber('version')->name('reject');
     });
 
-    // Optional alias untuk approval queue
-    Route::get('/approval-queue', [ApprovalController::class, 'index'])
-        ->name('approval.queue');
+    // Optional alias route
+    Route::get('/approval-queue', [ApprovalController::class, 'index'])->name('approval.queue');
 
     /*
     |--------------------------------------------------------------------------
     | Recycle Bin (restore / permanent delete)
-    | - Hanya dapat diakses oleh user yang berwenang (check role inside controller
-    |   or add middleware('role:admin|mr|director') here).
     |--------------------------------------------------------------------------
     */
     Route::prefix('recycle')->name('recycle.')->group(function () {
         Route::get('',                           [RecycleController::class, 'index'])->name('index');
+
         Route::post('{version}/restore',         [RecycleController::class, 'restore'])
             ->whereNumber('version')->name('restore');
+
         Route::delete('{version}',               [RecycleController::class, 'destroy'])
             ->whereNumber('version')->name('destroy');
 
-        // For HTML form compatibility you may also keep a POST destroy alias:
+        // HTML form compatibility
         Route::post('{version}/destroy',         [RecycleController::class, 'destroy'])
             ->whereNumber('version')->name('destroy.post');
     });
@@ -185,6 +209,10 @@ Route::middleware('auth')->group(function () {
 |--------------------------------------------------------------------------
 | Departments (public)
 |--------------------------------------------------------------------------
+|
+| These routes are intentionally public so they can be referenced without auth.
+| If you want them protected, move them inside the auth group above.
+|
 */
 Route::get('/departments', [DepartmentController::class, 'index'])->name('departments.index');
 Route::get('/departments/{department}', [DepartmentController::class, 'show'])

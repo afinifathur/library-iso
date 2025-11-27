@@ -12,7 +12,14 @@ use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
+use Illuminate\Support\Facades\Schema;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
+/**
+ * DocumentController
+ *
+ * Handles documents, versions, uploads, compare, preview, etc.
+ */
 class DocumentController extends Controller
 {
     /**
@@ -93,6 +100,264 @@ class DocumentController extends Controller
         }
 
         return view('documents.edit', compact('document', 'departments', 'categories'));
+    }
+
+    /**
+     * BUAT DOKUMEN BARU + BASELINE V1 APPROVED or DRAFT.
+     * Supports 'new' or 'replace' flows.
+     */
+    public function store(Request $request)
+    {
+        $user = $request->user();
+
+        if (! $user) {
+            return redirect()->route('login')->with('error', 'Login required.');
+        }
+
+        // Normalize inputs
+        $uploadType = $request->input('upload_type', $request->input('mode', 'new'));
+        $uploadType = strtolower(trim($uploadType ?: 'new'));
+
+        $submitRaw = $request->input('submit_for', $request->input('submit', 'publish'));
+        $submitRaw = strtolower(trim($submitRaw ?? 'publish'));
+
+        $submit = in_array($submitRaw, ['save','draft'], true) ? 'draft' : 'publish';
+
+        // Defensive: replace flow always draft
+        if ($uploadType === 'replace') {
+            $submit = 'draft';
+        }
+
+        // === Replace flow ===
+        if ($uploadType === 'replace') {
+            $validated = $request->validate([
+                'doc_code'      => ['required','string','exists:documents,doc_code'],
+                'version_label' => ['nullable','string','max:50'],
+                'file'          => 'nullable|file|mimes:pdf,doc,docx|max:51200',
+                'pasted_text'   => 'nullable|string',
+                'change_note'   => 'nullable|string|max:2000',
+                'related_links' => 'nullable|string',
+            ]);
+
+            try {
+                $disk = Storage::disk('documents');
+            } catch (\Throwable $e) {
+                $disk = Storage::disk('public');
+            }
+
+            $file_path = null;
+            $file_mime = null;
+            $checksum  = null;
+
+            if ($request->hasFile('file')) {
+                $file     = $request->file('file');
+                $safeName = $this->safeFilename($file->getClientOriginalName());
+                $filename = now()->timestamp . '_' . $safeName;
+                $folder   = $request->input('doc_code') . '/' . ($validated['version_label'] ?? 'draft');
+                $file_path = $folder . '/' . $filename;
+
+                $content   = file_get_contents($file->getRealPath());
+                $disk->put($file_path, $content);
+                $file_mime = $file->getClientMimeType() ?: 'application/octet-stream';
+                $checksum  = hash('sha256', $content);
+            }
+
+            $document = Document::where('doc_code', $validated['doc_code'])->first();
+            if (! $document) {
+                return back()->withInput()->with('error', 'Dokumen tidak ditemukan untuk diganti versinya.');
+            }
+
+            $draft = DocumentVersion::where('document_id', $document->id)
+                ->whereIn('status', ['draft','rejected'])
+                ->latest('id')
+                ->first();
+
+            if ($draft) {
+                if (! empty($file_path)) $draft->file_path = $file_path;
+                if (! empty($file_mime)) $draft->file_mime = $file_mime;
+                if (! empty($checksum))  $draft->checksum  = $checksum;
+
+                $draft->version_label   = $validated['version_label'] ?? ($draft->version_label ?? 'draft');
+                $draft->change_note     = $validated['change_note'] ?? $draft->change_note;
+                $draft->pasted_text     = $request->input('pasted_text') ?? $draft->pasted_text;
+                $draft->plain_text      = $request->input('pasted_text') ?? $draft->plain_text;
+                $draft->status          = 'draft';
+                $draft->approval_stage  = 'KABAG';
+                $draft->created_by      = $user->id;
+                if (Schema::hasColumn($draft->getTable(), 'submitted_at')) {
+                    $draft->submitted_at = null;
+                }
+                if (Schema::hasColumn($draft->getTable(), 'submitted_by')) {
+                    $draft->submitted_by = null;
+                }
+                if (Schema::hasColumn($draft->getTable(), 'rejected_reason')) {
+                    $draft->rejected_reason = null;
+                }
+                if (Schema::hasColumn($draft->getTable(), 'reject_reason')) {
+                    $draft->reject_reason = null;
+                }
+                $draft->save();
+            } else {
+                $draft = DocumentVersion::create([
+                    'document_id'   => $document->id,
+                    'version_label' => $validated['version_label'] ?? 'draft',
+                    'status'        => 'draft',
+                    'approval_stage'=> 'KABAG',
+                    'created_by'    => $user->id,
+                    'file_path'     => $file_path,
+                    'file_mime'     => $file_mime,
+                    'checksum'      => $checksum,
+                    'change_note'   => $validated['change_note'] ?? null,
+                    'pasted_text'   => $request->input('pasted_text') ?? null,
+                    'plain_text'    => $request->input('pasted_text') ?? null,
+                ]);
+            }
+
+            if ($request->has('related_links')) {
+                $document->related_links = $this->parseRelatedLinksInput($request->input('related_links'));
+                $document->save();
+            }
+
+            if (class_exists(\App\Models\AuditLog::class)) {
+                \App\Models\AuditLog::create([
+                    'event'               => 'create_replace_draft',
+                    'user_id'             => $user->id,
+                    'document_id'         => $document->id,
+                    'document_version_id' => $draft->id,
+                    'detail'              => json_encode(['via' => 'replace_mode']),
+                    'ip'                  => $request->ip(),
+                ]);
+            }
+
+            return redirect()->route('drafts.index')->with('success', 'Draft versi baru berhasil dibuat & masuk Draft Container.');
+        }
+
+        // Patch B: Defensive check - if uploading 'new' but doc_code exists, warn user
+        if ($uploadType === 'new' && $request->filled('doc_code')) {
+            $existing = Document::where('doc_code', $request->input('doc_code'))->first();
+            if ($existing) {
+                return redirect()->back()->withInput()->with('warning', 'Doc code sudah ada. Pilih "Ganti Versi Lama" untuk membuat pengajuan draft menggantikan versi lama.');
+            }
+        }
+
+        // Default: create new document
+        $categoryRule = class_exists(\App\Models\Category::class) ? 'required|integer|exists:categories,id' : 'nullable';
+
+        $validated = $request->validate([
+            'doc_code'      => 'required|string|max:120|unique:documents,doc_code',
+            'title'         => 'required|string|max:255',
+            'category_id'   => $categoryRule,
+            'department_id' => 'required|integer|exists:departments,id',
+            'file'          => 'nullable|file|mimes:pdf,doc,docx|max:51200',
+            'pasted_text'   => 'nullable|string',
+            'version_label' => 'nullable|string|max:50',
+            'change_note'   => 'nullable|string|max:2000',
+            'related_links' => 'nullable|string',
+        ]);
+
+        $document = Document::create([
+            'doc_code'      => $validated['doc_code'],
+            'title'         => $validated['title'],
+            'department_id' => $validated['department_id'],
+            'category_id'   => $validated['category_id'] ?? null,
+        ]);
+
+        if ($request->has('related_links')) {
+            $raw   = $request->input('related_links', '');
+            $links = $this->parseRelatedLinksInput($raw);
+            $document->related_links = $links;
+            $document->save();
+        }
+
+        try {
+            $disk = Storage::disk('documents');
+        } catch (\Throwable $e) {
+            $disk = Storage::disk('public');
+        }
+
+        $file_path = null;
+        $file_mime = null;
+        $checksum  = null;
+
+        if ($request->hasFile('file')) {
+            $file     = $request->file('file');
+            $safeName = $this->safeFilename($file->getClientOriginalName());
+            $filename = now()->timestamp . '_' . $safeName;
+            $folder   = $document->doc_code . '/v1';
+            $file_path = $folder . '/' . $filename;
+
+            $content   = file_get_contents($file->getRealPath());
+            $disk->put($file_path, $content);
+            $file_mime = $file->getClientMimeType() ?: 'application/octet-stream';
+            $checksum  = hash('sha256', $content);
+        }
+
+        if ($submit === 'publish') {
+            $version = DocumentVersion::create([
+                'document_id'   => $document->id,
+                'version_label' => $validated['version_label'] ?? 'v1',
+                'status'        => 'approved',
+                'approval_stage'=> 'DONE',
+                'file_path'     => $file_path,
+                'file_mime'     => $file_mime,
+                'checksum'      => $checksum,
+                'change_note'   => $validated['change_note'] ?? null,
+                'plain_text'    => $request->input('pasted_text') ?? null,
+                'created_by'    => $user->id ?? null,
+                'approved_by'   => $user->id ?? null,
+                'approved_at'   => now(),
+            ]);
+
+            $document->update([
+                'current_version_id' => $version->id,
+                'revision_number'    => 1,
+                'revision_date'      => now(),
+            ]);
+
+            if (class_exists(\App\Models\AuditLog::class)) {
+                \App\Models\AuditLog::create([
+                    'event'               => 'create_baseline_publish',
+                    'user_id'             => $user->id,
+                    'document_id'         => $document->id,
+                    'document_version_id' => $version->id,
+                    'detail'              => json_encode(['published' => true]),
+                    'ip'                  => $request->ip(),
+                ]);
+            }
+
+            return redirect()
+                ->route('documents.show', $document->id)
+                ->with('success', 'Baseline uploaded and published.');
+        }
+
+        // otherwise save as draft
+        $version = DocumentVersion::create([
+            'document_id'   => $document->id,
+            'version_label' => $validated['version_label'] ?? 'v1',
+            'status'        => 'draft',
+            'approval_stage'=> 'KABAG',
+            'file_path'     => $file_path,
+            'file_mime'     => $file_mime,
+            'checksum'      => $checksum,
+            'change_note'   => $validated['change_note'] ?? null,
+            'plain_text'    => $request->input('pasted_text') ?? null,
+            'created_by'    => $user->id ?? null,
+        ]);
+
+        if (class_exists(\App\Models\AuditLog::class)) {
+            \App\Models\AuditLog::create([
+                'event'               => 'create_baseline_draft',
+                'user_id'             => $user->id,
+                'document_id'         => $document->id,
+                'document_version_id' => $version->id,
+                'detail'              => json_encode(['published' => false]),
+                'ip'                  => $request->ip(),
+            ]);
+        }
+
+        return redirect()
+            ->route('drafts.index')
+            ->with('success', 'Baseline created as draft.');
     }
 
     /**
@@ -186,7 +451,6 @@ class DocumentController extends Controller
         }
 
         // choose disk (prefer 'documents' disk, fallback to 'public')
-        $disk = null;
         try {
             $disk = Storage::disk('documents');
         } catch (\Throwable $e) {
@@ -377,34 +641,47 @@ class DocumentController extends Controller
             abort(403);
         }
 
+        // MR forwards to DIRECTOR
         if (method_exists($user, 'hasAnyRole') && $user->hasAnyRole(['mr'])) {
             $version->update([
                 'status'         => 'submitted',
-                'approval_stage' => 'DIR',
-                'submitted_by'   => $user->id,
-                'submitted_at'   => now(),
+                'approval_stage' => 'DIRECTOR',
+                'submitted_by'   => Schema::hasColumn($version->getTable(), 'submitted_by') ? $user->id : null,
+                'submitted_at'   => Schema::hasColumn($version->getTable(), 'submitted_at') ? now() : null,
             ]);
 
             return back()->with('success', 'Version forwarded to Director.');
         }
 
+        // Director / Admin final approval
         if (method_exists($user, 'hasAnyRole') && $user->hasAnyRole(['director', 'admin'])) {
             DB::transaction(function () use ($version, $user) {
-                $version->update([
+                $update = [
                     'status'         => 'approved',
                     'approval_stage' => 'DONE',
-                    'approved_by'    => $user->id,
-                    'approved_at'    => now(),
-                ]);
+                ];
+                if (Schema::hasColumn($version->getTable(), 'approved_by')) {
+                    $update['approved_by'] = $user->id;
+                }
+                if (Schema::hasColumn($version->getTable(), 'approved_at')) {
+                    $update['approved_at'] = now();
+                }
+
+                $version->update($update);
 
                 $doc = $version->document;
-                $doc->update([
+                $docUpdate = [
                     'current_version_id' => $version->id,
                     'revision_number'    => $this->incRevision($doc->revision_number),
                     'revision_date'      => now(),
-                    'approved_by'        => $user->id,
-                    'approved_at'        => now(),
-                ]);
+                ];
+                if (Schema::hasColumn($doc->getTable(), 'approved_by')) {
+                    $docUpdate['approved_by'] = $user->id;
+                }
+                if (Schema::hasColumn($doc->getTable(), 'approved_at')) {
+                    $docUpdate['approved_at'] = now();
+                }
+                $doc->update($docUpdate);
             });
 
             return back()->with('success', 'Version approved and promoted to current.');
@@ -428,13 +705,25 @@ class DocumentController extends Controller
             abort(403);
         }
 
-        $version->update([
-            'status'          => 'rejected',
-            'approval_stage'  => 'KABAG',
-            'rejected_by'     => $user->id,
-            'rejected_at'     => now(),
-            'rejected_reason' => $request->input('rejected_reason'),
-        ]);
+        $update = [
+            'status'         => 'rejected',
+            'approval_stage' => 'KABAG',
+        ];
+
+        if (Schema::hasColumn($version->getTable(), 'rejected_by')) {
+            $update['rejected_by'] = $user->id;
+        }
+        if (Schema::hasColumn($version->getTable(), 'rejected_at')) {
+            $update['rejected_at'] = now();
+        }
+        if (Schema::hasColumn($version->getTable(), 'rejected_reason')) {
+            $update['rejected_reason'] = $request->input('rejected_reason');
+        }
+        if (Schema::hasColumn($version->getTable(), 'reject_reason')) {
+            $update['reject_reason'] = $request->input('rejected_reason');
+        }
+
+        $version->update($update);
 
         if (class_exists(\App\Models\AuditLog::class)) {
             \App\Models\AuditLog::create([
@@ -452,10 +741,6 @@ class DocumentController extends Controller
 
     /**
      * Detail dokumen + latest version + semua versi.
-     *
-     * NOTE: This method injects defensive placeholders for potentially-null
-     * relations/properties (e.g. signature) so views that access them directly
-     * won't crash. It's recommended to update views to use optional() instead.
      */
     public function show(Document $document)
     {
@@ -519,20 +804,15 @@ class DocumentController extends Controller
             }
         }
 
-        // Defensive placeholders: if views access ->signature or similar relations directly,
-        // ensure an object exists to avoid "Attempt to read property ... on null".
-        // Prefer to update views to use optional() — this is a backward-compatible safety.
+        // Defensive placeholders for signature usage in views
         if ($version && (! property_exists($version, 'signature') || $version->signature === null)) {
-            // inject lightweight placeholder object
             $version->signature = (object) [
                 'signed_at' => null,
                 'signed_by' => null,
-                // add other expected props if needed
             ];
         }
 
         if (! property_exists($document, 'signature') || $document->signature === null) {
-            // add placeholder at document-level as well (if view uses $document->signature)
             $document->signature = (object) [
                 'signed_at' => null,
                 'signed_by' => null,
@@ -550,9 +830,11 @@ class DocumentController extends Controller
 
     /**
      * Update metadata dokumen + buat/update versi terbaru.
+     * Normalizes submit_for values to 'submit'|'save' and checks schema before setting optional columns.
      */
     public function updateCombined(Request $request, Document $document)
     {
+        // -- VALIDATION & NORMALIZATION (replaced block) --
         $validated = $request->validate([
             'doc_code'      => ['required', 'string', 'max:80', Rule::unique('documents', 'doc_code')->ignore($document->id)],
             'title'         => 'required|string|max:255',
@@ -565,10 +847,19 @@ class DocumentController extends Controller
             'change_note'   => 'nullable|string|max:2000',
             'signed_by'     => 'nullable|string|max:191',
             'signed_at'     => 'nullable|date',
-            'submit_for'    => 'nullable|in:save,submit',
+            'submit_for'    => 'nullable|in:save,submit,publish,draft',
             'related_links' => 'nullable|string',
         ]);
 
+        $rawSubmit = strtolower(trim((string)($validated['submit_for'] ?? $request->input('submit_for', ''))));
+        if (in_array($rawSubmit, ['publish','submit'], true)) {
+            $submitFor = 'submit';
+        } else {
+            $submitFor = 'save';
+        }
+        // -- END validation & normalization --
+
+        // Update document metadata
         $document->update([
             'doc_code'      => $validated['doc_code'],
             'title'         => $validated['title'],
@@ -584,13 +875,13 @@ class DocumentController extends Controller
         }
 
         $user = $request->user();
-        $disk = null;
         try {
             $disk = Storage::disk('documents');
         } catch (\Throwable $e) {
             $disk = Storage::disk('public');
         }
 
+        // find existing version either by explicit version_id or by latest draft created by this user
         $version = null;
 
         if (!empty($validated['version_id'])) {
@@ -609,7 +900,7 @@ class DocumentController extends Controller
         }
 
         if (! $version) {
-            if (($validated['submit_for'] ?? 'save') === 'submit') {
+            if ($submitFor === 'submit') {
                 $pending = DocumentVersion::where('document_id', $document->id)
                     ->whereIn('status', ['submitted', 'pending'])
                     ->exists();
@@ -626,13 +917,21 @@ class DocumentController extends Controller
             $version->approval_stage  = 'KABAG';
         }
 
+        if (empty($version->created_by)) {
+            $version->created_by = $user->id;
+        }
+
         $file_path = $version->file_path ?? null;
         $file_mime = $version->file_mime ?? null;
         $checksum  = $version->checksum  ?? null;
 
         if ($request->hasFile('file')) {
             if ($file_path && $disk->exists($file_path)) {
-                $disk->delete($file_path);
+                try {
+                    $disk->delete($file_path);
+                } catch (\Throwable $e) {
+                    // ignore deletion failure
+                }
             }
 
             $file     = $request->file('file');
@@ -651,11 +950,11 @@ class DocumentController extends Controller
         $version->file_path     = $file_path;
         $version->file_mime     = $file_mime;
         $version->checksum      = $checksum;
-        $version->change_note   = $validated['change_note'] ?? null;
-        $version->signed_by     = $validated['signed_by']   ?? null;
+        $version->change_note   = $validated['change_note'] ?? $version->change_note;
+        $version->signed_by     = $validated['signed_by']   ?? $version->signed_by;
         $version->signed_at     = ! empty($validated['signed_at'])
             ? Carbon::parse($validated['signed_at'])
-            : null;
+            : $version->signed_at;
 
         if ($request->filled('pasted_text')) {
             $clean               = $this->normalizeText($request->input('pasted_text'));
@@ -666,7 +965,7 @@ class DocumentController extends Controller
         $version->save();
         Cache::forget('dashboard.payload');
 
-        if (($validated['submit_for'] ?? 'save') === 'submit') {
+        if ($submitFor === 'submit') {
             $pending = DocumentVersion::where('document_id', $document->id)
                 ->whereIn('status', ['submitted', 'pending'])
                 ->exists();
@@ -676,12 +975,18 @@ class DocumentController extends Controller
                     ->with('error', 'Submission blocked: another version already pending.');
             }
 
-            $version->update([
-                'status'         => 'submitted',
-                'submitted_by'   => $user->id,
-                'submitted_at'   => now(),
+            $update = [
+                'status' => 'submitted',
                 'approval_stage' => 'MR',
-            ]);
+            ];
+            if (Schema::hasColumn($version->getTable(), 'submitted_by')) {
+                $update['submitted_by'] = $user->id;
+            }
+            if (Schema::hasColumn($version->getTable(), 'submitted_at')) {
+                $update['submitted_at'] = now();
+            }
+
+            $version->update($update);
 
             return redirect()
                 ->route('documents.show', $document->id)
@@ -698,7 +1003,6 @@ class DocumentController extends Controller
      */
     public function downloadVersion(DocumentVersion $version)
     {
-        $disk = null;
         try {
             $disk = Storage::disk('documents');
         } catch (\Throwable $e) {
@@ -710,6 +1014,172 @@ class DocumentController extends Controller
         }
 
         return $disk->download($version->file_path, basename($version->file_path));
+    }
+
+    /**
+     * Download master file (doc / docx) associated with a version or document.
+     * Tries a few candidate fields and disks ('documents' then 'public').
+     */
+    public function downloadMaster(DocumentVersion $version)
+    {
+        // require auth (route is inside auth middleware, but check)
+        $user = request()->user();
+        if (! $user) {
+            abort(403, 'Login required.');
+        }
+
+        // Prefer 'documents' disk, fallback to 'public'
+        $disks = [];
+        try { $disks[] = Storage::disk('documents'); } catch (\Throwable $e) {}
+        try { $disks[] = Storage::disk('public'); } catch (\Throwable $e) {}
+
+        // Candidate paths to try (most-specific first)
+        $candidates = [
+            $version->master_path ?? null,
+            $version->document?->master_path ?? null,
+            // sometimes master is stored in file_path (fallback)
+            $version->file_path ?? null,
+            $version->document?->file_path ?? null,
+        ];
+
+        foreach ($disks as $disk) {
+            foreach ($candidates as $p) {
+                if (empty($p)) continue;
+                $path = ltrim($p, '/');
+                try {
+                    if (! $disk->exists($path)) {
+                        continue;
+                    }
+
+                    // Optional audit log
+                    if (class_exists(\App\Models\AuditLog::class)) {
+                        try {
+                            \App\Models\AuditLog::create([
+                                'event'               => 'download_master',
+                                'user_id'             => $user->id ?? null,
+                                'document_id'         => $version->document_id ?? null,
+                                'document_version_id' => $version->id,
+                                'detail'              => json_encode(['path' => $path]),
+                                'ip'                  => request()->ip(),
+                            ]);
+                        } catch (\Throwable $e) { /* ignore audit failures */ }
+                    }
+
+                    // Use disk->download if available
+                    try {
+                        return $disk->download($path, basename($path));
+                    } catch (\Throwable $e) {
+                        // fallback: stream
+                        $stream = $disk->readStream($path);
+                        if ($stream === false) {
+                            continue;
+                        }
+                        $size = null;
+                        try { $size = $disk->size($path); } catch (\Throwable $_) {}
+                        $mime = null;
+                        try { $mime = $disk->mimeType($path); } catch (\Throwable $_) {}
+                        return response()->stream(function () use ($stream) {
+                            fpassthru($stream);
+                            if (is_resource($stream)) fclose($stream);
+                        }, 200, array_filter([
+                            'Content-Type' => $mime,
+                            'Content-Length' => $size,
+                            'Content-Disposition' => 'attachment; filename="'.basename($path).'"',
+                            'Cache-Control' => 'private, max-age=0, must-revalidate',
+                        ]));
+                    }
+                } catch (\Throwable $e) {
+                    continue;
+                }
+            }
+        }
+
+        abort(404, 'Master file not found.');
+    }
+
+    /**
+     * Preview a version in iframe — ONLY serve PDF inline.
+     * If the version file is not a PDF, return 404 so iframe stays empty
+     * and no automatic download of other file types occurs.
+     */
+    public function previewVersion(DocumentVersion $version)
+    {
+        // require auth (route already protected by auth middleware)
+        $user = request()->user();
+        if (! $user) {
+            abort(403);
+        }
+
+        // disks to try
+        $disks = [];
+        try { $disks[] = Storage::disk('documents'); } catch (\Throwable $e) {}
+        try { $disks[] = Storage::disk('public'); } catch (\Throwable $e) {}
+
+        // candidate fields to check (order matters)
+        $candidates = [
+            $version->file_path ?? null,
+            $version->pdf_path ?? null,
+            $version->master_path ?? null,
+        ];
+
+        foreach ($disks as $disk) {
+            foreach ($candidates as $p) {
+                if (empty($p)) continue;
+                $path = ltrim($p, '/');
+                try {
+                    if (! $disk->exists($path)) {
+                        continue;
+                    }
+
+                    // prefer disk-provided mimeType, fallback to extension
+                    $mime = null;
+                    try { $mime = $disk->mimeType($path); } catch (\Throwable $e) { $mime = null; }
+                    $ext = strtolower(pathinfo($path, PATHINFO_EXTENSION));
+
+                    if ($mime === 'application/pdf' || $ext === 'pdf') {
+                        // stream inline
+                        $stream = $disk->readStream($path);
+                        if ($stream === false) {
+                            continue;
+                        }
+
+                        $size = null;
+                        try { $size = $disk->size($path); } catch (\Throwable $_) {}
+
+                        // Optional audit log for preview
+                        if (class_exists(\App\Models\AuditLog::class)) {
+                            try {
+                                \App\Models\AuditLog::create([
+                                    'event'               => 'preview_pdf',
+                                    'user_id'             => $user->id ?? null,
+                                    'document_id'         => $version->document_id ?? null,
+                                    'document_version_id' => $version->id,
+                                    'detail'              => json_encode(['path' => $path]),
+                                    'ip'                  => request()->ip(),
+                                ]);
+                            } catch (\Throwable $e) { /* ignore */ }
+                        }
+
+                        return response()->stream(function () use ($stream) {
+                            fpassthru($stream);
+                            if (is_resource($stream)) fclose($stream);
+                        }, 200, array_filter([
+                            'Content-Type' => 'application/pdf',
+                            'Content-Length' => $size,
+                            'Content-Disposition' => 'inline; filename="'.basename($path).'"',
+                            'Cache-Control' => 'public, max-age=0, must-revalidate',
+                        ]));
+                    }
+
+                    // non-pdf: skip (do not preview non-PDF inline)
+                } catch (\Throwable $e) {
+                    continue;
+                }
+            }
+        }
+
+        // no pdf found — 404 so iframe remains empty
+        abort(404, 'PDF preview not available for this version.');
     }
 
     /**
@@ -745,227 +1215,6 @@ class DocumentController extends Controller
         }
 
         return back()->with('success', 'Version moved to Recycle Bin.');
-    }
-
-    /**
-     * BUAT DOKUMEN BARU + BASELINE V1 APPROVED or DRAFT.
-     *
-     * Supports:
-     * - upload_type/mode = 'new' (create document)
-     * - upload_type/mode = 'replace' (create draft version for existing document)
-     *
-     * submit_for: 'publish'|'submit' => publish; 'save'|'draft' => draft
-     */
-    public function store(Request $request)
-    {
-        $user = $request->user();
-
-        if (! $user) {
-            return redirect()->route('login')->with('error', 'Login required.');
-        }
-
-        // support both new names and legacy name
-        $uploadType = $request->input('upload_type', $request->input('mode', 'new'));
-        $submitRaw  = $request->input('submit_for', $request->input('submit', 'publish'));
-
-        // normalize submit action
-        $submit = in_array($submitRaw, ['save','draft'], true) ? 'draft' : (in_array($submitRaw, ['publish','submit'], true) ? 'publish' : $submitRaw);
-
-        // === validation rules differ for new vs replace; handle Category presence optional ===
-        $categoryRule = class_exists(\App\Models\Category::class) ? 'required|integer|exists:categories,id' : 'nullable';
-
-        if ($uploadType === 'replace') {
-            $validated = $request->validate([
-                'doc_code'      => ['required','string','exists:documents,doc_code'],
-                'version_label' => ['nullable','string','max:50'],
-                'file'          => 'nullable|file|mimes:pdf,doc,docx|max:51200',
-                'pasted_text'   => 'nullable|string',
-                'change_note'   => 'nullable|string|max:2000',
-                'related_links' => 'nullable|string',
-            ]);
-
-            $document = Document::where('doc_code', $validated['doc_code'])->first();
-
-            if (! $document) {
-                return back()->withInput()->with('error', 'Dokumen tidak ditemukan untuk diganti versinya.');
-            }
-
-            // choose disk
-            try {
-                $disk = Storage::disk('documents');
-            } catch (\Throwable $e) {
-                $disk = Storage::disk('public');
-            }
-
-            $file_path = null;
-            $file_mime = null;
-            $checksum  = null;
-
-            if ($request->hasFile('file')) {
-                $file     = $request->file('file');
-                $safeName = $this->safeFilename($file->getClientOriginalName());
-                $filename = time() . '_' . $safeName;
-                $folder   = $document->doc_code . '/' . ($validated['version_label'] ?? 'draft');
-                $file_path = $folder . '/' . $filename;
-
-                $content   = file_get_contents($file->getRealPath());
-                $disk->put($file_path, $content);
-                $file_mime = $file->getClientMimeType() ?: 'application/octet-stream';
-                $checksum  = hash('sha256', $content);
-            }
-
-            // create draft version (replace flow always creates draft)
-            $version = new DocumentVersion();
-            $version->document_id   = $document->id;
-            $version->version_label = $validated['version_label'] ?? 'vX';
-            $version->status        = 'draft';
-            $version->approval_stage= 'KABAG';
-            $version->created_by    = $user->id;
-            $version->file_path     = $file_path;
-            $version->file_mime     = $file_mime;
-            $version->checksum      = $checksum;
-            $version->change_note   = $validated['change_note'] ?? null;
-            $version->pasted_text   = $request->input('pasted_text') ?? null;
-            $version->plain_text    = $request->input('pasted_text') ?? null;
-            $version->save();
-
-            if ($request->has('related_links')) {
-                $document->related_links = $this->parseRelatedLinksInput($request->input('related_links'));
-                $document->save();
-            }
-
-            if (class_exists(\App\Models\AuditLog::class)) {
-                \App\Models\AuditLog::create([
-                    'event'               => 'create_replace_draft',
-                    'user_id'             => $user->id,
-                    'document_id'         => $document->id,
-                    'document_version_id' => $version->id,
-                    'detail'              => json_encode(['via' => 'replace_mode']),
-                    'ip'                  => $request->ip(),
-                ]);
-            }
-
-            return redirect()->route('drafts.index')
-                ->with('success', 'Draft versi baru berhasil dibuat & masuk Draft Container.');
-        }
-
-        // Default: create new document
-        $validated = $request->validate([
-            'doc_code'      => 'required|string|max:120|unique:documents,doc_code',
-            'title'         => 'required|string|max:255',
-            'category_id'   => $categoryRule,
-            'department_id' => 'required|integer|exists:departments,id',
-            'file'          => 'nullable|file|mimes:pdf,doc,docx|max:51200',
-            'pasted_text'   => 'nullable|string',
-            'version_label' => 'nullable|string|max:50',
-            'change_note'   => 'nullable|string|max:2000',
-            'related_links' => 'nullable|string',
-        ]);
-
-        $document = Document::create([
-            'doc_code'      => $validated['doc_code'],
-            'title'         => $validated['title'],
-            'department_id' => $validated['department_id'],
-            'category_id'   => $validated['category_id'] ?? null,
-        ]);
-
-        if ($request->has('related_links')) {
-            $raw   = $request->input('related_links', '');
-            $links = $this->parseRelatedLinksInput($raw);
-            $document->related_links = $links;
-            $document->save();
-        }
-
-        try {
-            $disk = Storage::disk('documents');
-        } catch (\Throwable $e) {
-            $disk = Storage::disk('public');
-        }
-
-        $file_path = null;
-        $file_mime = null;
-        $checksum  = null;
-
-        if ($request->hasFile('file')) {
-            $file     = $request->file('file');
-            $safeName = $this->safeFilename($file->getClientOriginalName());
-            $filename = time() . '_' . $safeName;
-            $folder   = $document->doc_code . '/v1';
-            $file_path = $folder . '/' . $filename;
-
-            $content   = file_get_contents($file->getRealPath());
-            $disk->put($file_path, $content);
-            $file_mime = $file->getClientMimeType() ?: 'application/octet-stream';
-            $checksum  = hash('sha256', $content);
-        }
-
-        // if user chose to publish baseline immediately
-        if ($submit === 'publish') {
-            $version = DocumentVersion::create([
-                'document_id'   => $document->id,
-                'version_label' => $validated['version_label'] ?? 'v1',
-                'status'        => 'approved',
-                'approval_stage'=> 'DONE',
-                'file_path'     => $file_path,
-                'file_mime'     => $file_mime,
-                'checksum'      => $checksum,
-                'change_note'   => $validated['change_note'] ?? null,
-                'plain_text'    => $request->input('pasted_text') ?? null,
-                'created_by'    => $user->id ?? null,
-                'approved_by'   => $user->id ?? null,
-                'approved_at'   => now(),
-            ]);
-
-            $document->update([
-                'current_version_id' => $version->id,
-                'revision_number'    => 1,
-                'revision_date'      => now(),
-            ]);
-
-            if (class_exists(\App\Models\AuditLog::class)) {
-                \App\Models\AuditLog::create([
-                    'event'               => 'create_baseline_publish',
-                    'user_id'             => $user->id,
-                    'document_id'         => $document->id,
-                    'document_version_id' => $version->id,
-                    'detail'              => json_encode(['published' => true]),
-                    'ip'                  => $request->ip(),
-                ]);
-            }
-
-            return redirect()
-                ->route('documents.show', $document->id)
-                ->with('success', 'Baseline uploaded and published.');
-        }
-
-        // otherwise save as draft — create draft version and go to drafts
-        $version = DocumentVersion::create([
-            'document_id'   => $document->id,
-            'version_label' => $validated['version_label'] ?? 'v1',
-            'status'        => 'draft',
-            'approval_stage'=> 'KABAG',
-            'file_path'     => $file_path,
-            'file_mime'     => $file_mime,
-            'checksum'      => $checksum,
-            'change_note'   => $validated['change_note'] ?? null,
-            'plain_text'    => $request->input('pasted_text') ?? null,
-            'created_by'    => $user->id ?? null,
-        ]);
-
-        if (class_exists(\App\Models\AuditLog::class)) {
-            \App\Models\AuditLog::create([
-                'event'               => 'create_baseline_draft',
-                'user_id'             => $user->id,
-                'document_id'         => $document->id,
-                'document_version_id' => $version->id,
-                'detail'              => json_encode(['published' => false]),
-                'ip'                  => $request->ip(),
-            ]);
-        }
-
-        return redirect()
-            ->route('drafts.index')
-            ->with('success', 'Baseline created as draft.');
     }
 
     /* =========================
