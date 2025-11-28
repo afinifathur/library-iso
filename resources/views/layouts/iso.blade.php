@@ -1,9 +1,10 @@
+{{-- resources/views/layouts/iso.blade.php --}}
 <!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>ISO Library</title>
+  <title>@yield('title', 'ISO Library')</title>
 
   <link rel="stylesheet" href="{{ asset('css/style.css') }}">
 
@@ -108,7 +109,7 @@
 
         {{-- Brand --}}
         <a href="{{ url('/') }}" class="brand">
-          <img src="{{ asset('images/logo.png') }}" class="logo-img">
+          <img src="{{ asset('images/logo.png') }}" class="logo-img" alt="Logo">
           <div class="brand-text">
             <div class="title">Document Control</div>
             <div class="sub">Management System</div>
@@ -177,10 +178,10 @@
         <div class="dropdown" style="margin-left:12px;">
             @php
                 $email = Auth::user()->email ?? '';
-                $username = explode('@', strtolower($email))[0];
+                $username = explode('@', strtolower($email))[0] ?? (Auth::user()->name ?? 'user');
             @endphp
 
-            <button class="dropdown-toggle">
+            <button class="dropdown-toggle" type="button">
                 {{ $username }} ▼
             </button>
 
@@ -216,16 +217,21 @@
         const toggle = dropdown.querySelector('.dropdown-toggle');
         const inlineMenu = dropdown.querySelector('.dropdown-menu[data-fallback="true"]');
 
+        // create detached menu to avoid overflow/clipping inside header
         const menu = document.createElement('div');
         menu.className = 'dropdown-menu';
-        menu.innerHTML = inlineMenu.innerHTML;
+        menu.style.display = 'none';
+        menu.innerHTML = inlineMenu ? inlineMenu.innerHTML : '';
         document.body.appendChild(menu);
 
         function positionMenu() {
             const rect = toggle.getBoundingClientRect();
-            menu.style.position = "fixed";
+            // position to the right edge of the toggle (align right)
             menu.style.top = (rect.bottom + 8) + "px";
-            menu.style.left = (rect.right - menu.offsetWidth) + "px";
+            // if menu width is 0 (not rendered), temporarily show to compute width
+            if (!menu.offsetWidth) { menu.style.display = 'block'; menu.style.visibility = 'hidden'; }
+            menu.style.left = Math.max(8, rect.right - menu.offsetWidth) + "px";
+            if (menu.style.visibility === 'hidden') { menu.style.visibility = ''; menu.style.display = 'none'; }
             menu.style.zIndex = "99999";
         }
 
@@ -244,7 +250,61 @@
                 menu.style.display = "none";
             }
         });
+
+        // adjust on resize/scroll
+        window.addEventListener('resize', function(){ if (menu.style.display === 'block') positionMenu(); });
+        window.addEventListener('scroll', function(){ if (menu.style.display === 'block') positionMenu(); }, true);
     });
+  </script>
+
+  {{-- FORCE ENABLE APPROVE/REJECT BUTTONS — MVP PATCH --}}
+  <script>
+    (function forceEnableApproveButtonsForMVP() {
+      /**
+       * Purpose:
+       * - Remove disabled attributes from buttons so Approve/Reject are clickable immediately.
+       * - Mark approve forms to avoid JS guards that might intercept submission.
+       *
+       * Usage: paste this script into your layout (same file where approval helper runs).
+       */
+      function enableAllApproveButtons() {
+        try {
+          document.querySelectorAll('.btn-approve, .btn-reject').forEach(btn => {
+            btn.removeAttribute('disabled');
+            btn.removeAttribute('aria-disabled');
+            // ensure pointer events are allowed
+            btn.style.pointerEvents = '';
+            btn.style.opacity = '';
+          });
+
+          // If there are guard flags set by other scripts (e.g. __isoGuard false),
+          // set them to true so attachApproveGuards won't prevent submit.
+          document.querySelectorAll('form.action-form-approve, form[action*="/approval/"][method="POST"]').forEach(f => {
+            try { f.__isoGuard = true; } catch(e){}
+          });
+
+        } catch(e) {
+          console.warn('forceEnableApproveButtonsForMVP error', e);
+        }
+      }
+
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', enableAllApproveButtons);
+      } else {
+        enableAllApproveButtons();
+      }
+
+      // also observe for dynamically loaded rows (AJAX)
+      try {
+        const obs = new MutationObserver(muts => {
+          enableAllApproveButtons();
+        });
+        obs.observe(document.body, { childList: true, subtree: true });
+        window.__forceEnableApproveButtonsForMVP = { enableAllApproveButtons, _observer: obs };
+      } catch(e) {
+        window.__forceEnableApproveButtonsForMVP = { enableAllApproveButtons };
+      }
+    })();
   </script>
 
 </body>

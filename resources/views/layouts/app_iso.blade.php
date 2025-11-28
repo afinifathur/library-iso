@@ -151,15 +151,14 @@ document.addEventListener("DOMContentLoaded", function () {
         const DEBUG = false;
 
         function enableRowForVersion(vid) {
-          if (!vid) return;
-          document.querySelectorAll('tr[data-version-id="'+vid+'"]').forEach(tr=>{
-            tr.classList.add('iso-opened-row');
-            tr.querySelectorAll('.btn-approve, .btn-reject').forEach(btn=>{
-              btn.removeAttribute('disabled'); btn.removeAttribute('aria-disabled');
-            });
-            tr.querySelectorAll('.select-version').forEach(inp => inp.disabled = false);
-          });
-        }
+  document.querySelectorAll(`tr[data-version-id="${vid}"]`).forEach(tr=>{
+    tr.classList.add('iso-opened-row');
+    tr.querySelectorAll('.btn-approve, .btn-reject').forEach(btn=>{
+      btn.removeAttribute('disabled');
+    });
+  });
+}
+
 
         function attachOpenHandlers() {
           const links = Array.from(document.querySelectorAll('.action-open'));
@@ -211,26 +210,13 @@ document.addEventListener("DOMContentLoaded", function () {
           }
         });
 
-        // Prevent approve form submit unless opened
-        function attachApproveGuards() {
-          document.querySelectorAll('form.action-form-approve, form[action*="/approval/"][method="POST"]').forEach(form=>{
-            if (form.__isoGuard) return;
-            form.__isoGuard = true;
-            form.addEventListener('submit', function(e){
-              try {
-                const tr = this.closest('tr');
-                const vid = tr?.dataset?.versionId || this.dataset?.versionId;
-                if (!vid) return;
-                const opened = !!localStorage.getItem('iso_opened_version_' + vid);
-                if (!opened) {
-                  e.preventDefault();
-                  alert('Silakan buka dokumen (Open) terlebih dahulu sebelum menyetujui.');
-                  return false;
-                }
-              } catch(err){ if (DEBUG) console.error(err); }
-            });
-          });
-        }
+        // Prevent approve form submit unless opened (DISABLED FOR MVP)
+function attachApproveGuards() {
+  // do nothing — allow approve & reject immediately
+  return;
+}
+
+        
 
         // Initialize
         function initAll() {

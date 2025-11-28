@@ -63,14 +63,17 @@
                         $creator = optional($v->creator ?? null);
                         $creatorDisplay = $creator->email ?? $creator->name ?? $v->created_by ?? '-';
                         $when = $v->created_at ? $v->created_at->format('Y-m-d') : '-';
-                        // ensure dataset values are strings
-                        $dataVersionId = e((string) ($v->id ?? ''));
-                        $dataDocId = e((string) ($docId ?? ''));
+                        $versionIdAttr = e((string) ($v->id ?? ''));
+                        $docIdAttr = e((string) ($docId ?? ''));
                     @endphp
 
-                    <tr data-version-id="{{ $dataVersionId }}" data-doc-id="{{ $dataDocId }}">
+                    <tr data-version-id="{{ $versionIdAttr }}" data-doc-id="{{ $docIdAttr }}">
                         <td>
-                            <input class="select-version" type="checkbox" value="{{ $dataVersionId }}" data-doc="{{ $dataDocId }}" aria-label="Select version {{ e($versionLabel) }}" disabled>
+                            <input class="select-version" type="checkbox"
+                                   value="{{ $versionIdAttr }}"
+                                   data-doc="{{ $docIdAttr }}"
+                                   aria-label="Select version {{ e($versionLabel) }}"
+                                   disabled>
                         </td>
 
                         <td>
@@ -91,14 +94,14 @@
 
                         <td>
                             <div class="action-buttons" style="display:flex;gap:6px;flex-wrap:wrap">
-                                <!-- Open (with onclick fallback to persist flag) -->
+                                <!-- Open (no inline JS; data attributes used) -->
                                 @if(!empty($v->id))
                                     <a href="{{ route('versions.show', $v->id) }}"
                                        target="_blank"
                                        rel="noopener noreferrer"
                                        class="btn btn-outline-primary btn-sm action-open"
                                        aria-label="Open version {{ e($versionLabel) }}"
-                                       onclick="try{ localStorage.setItem('iso_opened_version_{{ $v->id }}','1'); }catch(e){}">
+                                       data-version-id="{{ $versionIdAttr }}">
                                         Open
                                     </a>
                                 @else
@@ -182,7 +185,6 @@
   const qs = (sel, ctx = document) => ctx.querySelector(sel);
   const qsa = (sel, ctx = document) => Array.from(ctx.querySelectorAll(sel));
 
-  // avoid duplicate listener registration by marking elements
   function markAttached(el, key) {
     if (!el) return false;
     if (el.dataset[key]) return false;
@@ -197,24 +199,24 @@
       btn.removeAttribute('disabled');
       btn.removeAttribute('aria-disabled');
     });
-    // enable checkbox for selection
     tr.querySelectorAll('.select-version').forEach(cb => cb.disabled = false);
-    // add a visual highlight
     tr.classList.add('iso-opened-row');
   }
 
-  // Find row(s) by version id and enable them
+  function enableAllRows() {
+    qsa('tr[data-version-id]').forEach(enableRowActions);
+  }
+
   function enableByVersionId(vid) {
     if (!vid) return;
     qsa(`tr[data-version-id="${vid}"]`).forEach(enableRowActions);
   }
 
-  // Persist open state (localStorage)
+  // Persist open state (still kept, optional)
   function persistOpened(vid) {
     if (!vid) return;
-    try { localStorage.setItem('iso_opened_version_' + vid, '1'); } catch (e) { /* ignore */ }
+    try { localStorage.setItem('iso_opened_version_' + vid, '1'); } catch (e) {}
   }
-
   function isPersistedOpened(vid) {
     try { return !!localStorage.getItem('iso_opened_version_' + vid); } catch (e) { return false; }
   }
@@ -224,24 +226,20 @@
     qsa('.action-open').forEach(link => {
       if (!markAttached(link, 'isoOpenAttached')) return;
       link.addEventListener('click', function (ev) {
-        // Note: do NOT prevent default so link can open in new tab
         try {
           const tr = this.closest('tr');
           const vid = tr?.dataset?.versionId;
           if (!vid) return;
           persistOpened(vid);
           enableByVersionId(vid);
-
-          // notify opener window if opened from child
           try {
             if (window.opener && !window.opener.closed) {
               window.opener.postMessage({ iso_action: 'version_opened', version_id: vid }, '*');
             }
-          } catch (e) { /* ignore */ }
+          } catch (e) {}
         } catch (e) { console.warn('open handler error', e); }
       }, { passive: true });
 
-      // support middle-click (auxclick) too
       link.addEventListener('auxclick', function (ev) {
         if (ev.button === 1) {
           try {
@@ -251,58 +249,20 @@
               persistOpened(vid);
               enableByVersionId(vid);
             }
-          } catch (e) { /* ignore */ }
+          } catch (e) {}
         }
       }, { passive: true });
     });
   }
 
-  // restore flags on page load
-  function applyPersistedFlags() {
-    qsa('tr[data-version-id]').forEach(tr => {
-      const vid = tr.dataset.versionId;
-      if (vid && isPersistedOpened(vid)) enableByVersionId(vid);
-    });
-  }
-
-  // Listen for postMessage from child tabs
-  window.addEventListener('message', function (ev) {
-    try {
-      const d = ev.data || {};
-      if (d && d.iso_action === 'version_opened' && d.version_id) {
-        enableByVersionId(String(d.version_id));
-        try { localStorage.setItem('iso_opened_version_' + String(d.version_id), '1'); } catch(e){}
-      }
-    } catch (e) { /* ignore */ }
-  }, false);
-
-  // Listen for storage events (across tabs)
-  window.addEventListener('storage', function (ev) {
-    if (!ev.key) return;
-    if (ev.key.startsWith('iso_opened_version_') && ev.newValue) {
-      const vid = ev.key.replace('iso_opened_version_', '');
-      enableByVersionId(vid);
-    }
-  });
-
-  // ---------- Approve guard ----------
+  // ---------- Approve guard (DISABLED for MVP) ----------
+  // For now: do not block approve submits. Keep handler to attach only (no prevention).
   function attachApproveGuards() {
     qsa('form.action-form-approve').forEach(form => {
       if (!markAttached(form, 'isoApproveGuard')) return;
+      // no blocking check here for MVP — allow submit immediately
       form.addEventListener('submit', function (ev) {
-        const tr = this.closest('tr');
-        const vid = tr?.dataset?.versionId;
-        if (!vid) {
-          ev.preventDefault();
-          alert('Version ID tidak terdeteksi. Buka dokumen terlebih dahulu.');
-          return false;
-        }
-        if (!isPersistedOpened(vid)) {
-          ev.preventDefault();
-          alert('Silakan buka dokumen (Open) terlebih dahulu sebelum menyetujui.');
-          return false;
-        }
-        // otherwise allow normal submit
+        // no guard: allow submit
       });
     });
   }
@@ -316,8 +276,8 @@
         const vid = tr?.dataset?.versionId;
         const docCode = this.getAttribute('data-doc-code') || '';
         if (!vid) { alert('Version ID tidak terdeteksi.'); return; }
-        if (!isPersistedOpened(vid)) { alert('Silakan buka dokumen (Open) terlebih dahulu sebelum menolak.'); return; }
 
+        // NOTE: we no longer require doc to be opened — MVP enables reject immediately
         const versionInput = qs('#reject_version_id');
         const reasonTextarea = qs('#reject_reason');
         const docLabel = qs('#rejectDocCode');
@@ -330,13 +290,11 @@
       });
     });
 
-    // modal show/close helpers (exposed)
     window.showRejectModal = () => {
       const el = qs('#rejectModal');
       if (!el) return;
       el.style.display = 'flex';
       el.setAttribute('aria-hidden', 'false');
-      // focus textarea
       setTimeout(() => { const t = qs('#reject_reason'); if (t) t.focus(); }, 50);
     };
     window.closeRejectModal = () => {
@@ -346,7 +304,6 @@
       el.setAttribute('aria-hidden', 'true');
     };
 
-    // close on escape
     document.addEventListener('keydown', function (e) {
       if (e.key === 'Escape') {
         const modal = qs('#rejectModal');
@@ -354,7 +311,6 @@
       }
     });
 
-    // submit reject
     const rejectSubmitBtn = qs('#rejectSubmitBtn');
     if (rejectSubmitBtn && markAttached(rejectSubmitBtn, 'isoRejectSubmit')) {
       rejectSubmitBtn.addEventListener('click', function () {
@@ -437,7 +393,14 @@
     attachRejectButtons();
     attachSelectAll();
     attachCompareSelected();
-    applyPersistedFlags();
+
+    // MVP change: enable all rows immediately (no need to open first)
+    enableAllRows();
+    // still apply persisted flags visually if present
+    qsa('tr[data-version-id]').forEach(tr => {
+      const vid = tr.dataset.versionId;
+      if (vid && isPersistedOpened(vid)) enableByVersionId(vid);
+    });
   }
 
   if (document.readyState === 'loading') {
@@ -450,7 +413,10 @@
   window.__isoApproval = {
     enableByVersionId,
     persistOpened,
-    applyPersistedFlags,
+    applyPersistedFlags: () => qsa('tr[data-version-id]').forEach(tr => {
+      const vid = tr.dataset.versionId;
+      if (vid && isPersistedOpened(vid)) enableByVersionId(vid);
+    })
   };
 
 })();

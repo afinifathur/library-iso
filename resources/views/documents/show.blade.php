@@ -216,7 +216,7 @@
     <a class="btn" href="{{ route('documents.versions.downloadMaster', $currentVersion->id) }}">Download master</a>
 @elseif($currentVersion && $currentVersion->file_path)
     {{-- fallback to existing download route --}}
-    <a class="btn" href="{{ route('documents.versions.download', $currentVersion->id) }}">Download file</a>
+    <a class="btn" href="{{ route('documents.versions.download', $currentVersion->id) }}">Download master docx</a>
 @else
     <button class="btn-muted" type="button" disabled>Download master</button>
 @endif
@@ -307,6 +307,9 @@
         <h4 style="margin-top:0;margin-bottom:8px">Versions</h4>
         <ul style="list-style:none;padding:0;margin:0">
           @forelse($versions as $ver)
+            @php
+              $verIdAttr = e((string)($ver->id ?? ''));
+            @endphp
             <li style="padding:8px 0;border-bottom:1px solid #f4f6f8;">
               <div style="display:flex;justify-content:space-between;align-items:center;">
                 <div>
@@ -319,8 +322,16 @@
                 </div>
                 <div style="text-align:right;">
                   @if(Route::has('versions.show'))
-                    <a class="btn-small" href="{{ route('versions.show', $ver->id) }}">Open</a>
+                    {{-- Open: use data attribute + class action-open (NO inline onclick) --}}
+                    <a class="btn-small action-open"
+                       href="{{ route('versions.show', $ver->id) }}"
+                       target="_blank"
+                       rel="noopener noreferrer"
+                       data-version-id="{{ $verIdAttr }}">
+                      Open
+                    </a>
                   @endif
+
                   @if($ver->file_path)
                     <a class="btn-small btn-muted" href="{{ route('documents.versions.download', $ver->id) }}">DL</a>
                   @else
@@ -677,6 +688,97 @@
     if (pdfZoomOut) {
       pdfZoomOut.addEventListener('click', function () { setZoom(currentZoom - 0.1); });
     }
+
+    // ----------------------
+    // Attach handlers for "Open" links in Versions list
+    // - uses data-version-id attribute and class .action-open
+    // - persists localStorage key iso_opened_version_{id}
+    // - posts message to opener (if any)
+    // - supports middle-click via auxclick
+    // ----------------------
+    function qsa(selector, ctx) { return Array.from((ctx || document).querySelectorAll(selector)); }
+    function persistOpened(vid) {
+      if (!vid) return;
+      try { localStorage.setItem('iso_opened_version_' + vid, '1'); } catch(e) {}
+    }
+    function markAttached(el, key) {
+      if (!el) return false;
+      if (el.dataset && el.dataset[key]) return false;
+      if (el.dataset) el.dataset[key] = '1';
+      return true;
+    }
+
+    function attachVersionOpenHandlers() {
+      qsa('.action-open').forEach(function (link) {
+        if (!markAttached(link, 'isoOpenAttached')) return;
+        link.addEventListener('click', function () {
+          try {
+            var vid = this.getAttribute('data-version-id') || (this.dataset && this.dataset.versionId);
+            if (!vid) {
+              // try to parse from href last segment as fallback
+              try {
+                var href = this.getAttribute('href') || '';
+                var m = href.match(/\/(\d+)(?:$|[?#])/);
+                if (m) vid = m[1];
+              } catch (e) { /* ignore */ }
+            }
+            if (!vid) return;
+            persistOpened(vid);
+            try {
+              if (window.opener && !window.opener.closed) {
+                window.opener.postMessage({ iso_action: 'version_opened', version_id: vid }, '*');
+              }
+            } catch (e) { /* ignore */ }
+          } catch (e) { console.warn('open handler error', e); }
+        }, { passive: true });
+
+        // handle middle-click (open in new tab)
+        link.addEventListener('auxclick', function (ev) {
+          if (ev.button === 1) {
+            try {
+              var vid = this.getAttribute('data-version-id') || (this.dataset && this.dataset.versionId);
+              if (!vid) {
+                try {
+                  var href = this.getAttribute('href') || '';
+                  var m = href.match(/\/(\d+)(?:$|[?#])/);
+                  if (m) vid = m[1];
+                } catch (e) {}
+              }
+              if (vid) persistOpened(vid);
+            } catch (e) {}
+          }
+        }, { passive: true });
+      });
+    }
+
+    // also listen to incoming postMessage / storage so other tabs can reflect opened state
+    window.addEventListener('message', function (ev) {
+      try {
+        var d = ev.data || {};
+        if (d && d.iso_action === 'version_opened' && d.version_id) {
+          try { localStorage.setItem('iso_opened_version_' + String(d.version_id), '1'); } catch(e){}
+        }
+      } catch (e) {}
+    }, false);
+
+    window.addEventListener('storage', function (ev) {
+      try {
+        if (!ev.key) return;
+        if (ev.key.indexOf('iso_opened_version_') === 0 && ev.newValue) {
+          // no-op here (other pages can read localStorage on load)
+          // If you want visual feedback, you can query DOM and enable buttons
+        }
+      } catch (e) {}
+    });
+
+    // init open handlers
+    attachVersionOpenHandlers();
+
+    // expose small helper for debugging
+    window.__docShow = {
+      attachVersionOpenHandlers: attachVersionOpenHandlers
+    };
+
   })();
 </script>
 @endsection
