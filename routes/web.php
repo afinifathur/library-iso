@@ -17,11 +17,6 @@ use App\Http\Controllers\RecycleController;
 |--------------------------------------------------------------------------
 |
 | Clean, ready-to-paste routes file for the Library-ISO application.
-| Organization:
-|  - Public (guest) routes
-|  - Authenticated routes
-|  - Public departments routes
-|  - Optional external route file
 |
 */
 
@@ -71,6 +66,7 @@ Route::middleware('auth')->group(function () {
         Route::post('',                [DocumentController::class, 'store'])->name('store');
         Route::post('upload-pdf',      [DocumentController::class, 'uploadPdf'])->name('uploadPdf');
 
+        // Show / edit / update / compare
         Route::get('{document}',       [DocumentController::class, 'show'])
             ->whereNumber('document')->name('show');
 
@@ -83,13 +79,19 @@ Route::middleware('auth')->group(function () {
         Route::put('{document}',       [DocumentController::class, 'updateCombined'])
             ->whereNumber('document')->name('updateCombined');
 
-        // Download specific version (PDF)
+        /*
+         | Version-specific actions (download, download-master, preview)
+         | Named as documents.versions.* for consistency
+         */
         Route::get('versions/{version}/download', [DocumentController::class, 'downloadVersion'])
             ->whereNumber('version')->name('versions.download');
 
-        // Download master (doc / docx) for a version
         Route::get('versions/{version}/download-master', [DocumentController::class, 'downloadMaster'])
             ->whereNumber('version')->name('versions.downloadMaster');
+
+        // Preview (only PDF inline) - kept inside auth
+        Route::get('versions/{version}/preview', [DocumentController::class, 'previewVersion'])
+            ->whereNumber('version')->name('versions.preview');
     });
 
     /*
@@ -101,7 +103,7 @@ Route::middleware('auth')->group(function () {
 
     /*
     |--------------------------------------------------------------------------
-    | Versions
+    | Versions (separate controller for version CRUD/workflow)
     |--------------------------------------------------------------------------
     */
     Route::prefix('versions')->name('versions.')->group(function () {
@@ -128,12 +130,6 @@ Route::middleware('auth')->group(function () {
             ->whereNumber('version')->name('trash');
     });
 
-    // OPTIONAL: preview route for documents versions (used by PDF viewer/iframe)
-    // This route is placed inside the auth group as requested.
-    Route::get('documents/versions/{version}/preview', [DocumentController::class, 'previewVersion'])
-        ->whereNumber('version')
-        ->name('documents.versions.preview');
-
     /*
     |--------------------------------------------------------------------------
     | Drafts
@@ -148,7 +144,7 @@ Route::middleware('auth')->group(function () {
         Route::get('{version}/edit',             [DraftController::class, 'edit'])
             ->whereNumber('version')->name('edit');
 
-        // prefer DELETE, but POST kept for HTML form compatibility
+        // prefer DELETE, but provide POST alias for HTML forms
         Route::delete('{version}',               [DraftController::class, 'destroy'])
             ->whereNumber('version')->name('destroy');
         Route::post('{version}/delete',          [DraftController::class, 'destroy'])
@@ -171,7 +167,6 @@ Route::middleware('auth')->group(function () {
         // ->middleware('role:mr|director|kabag|admin')
         Route::get('',                           [ApprovalController::class, 'index'])->name('index');
 
-        // view single version in approval flow
         Route::get('{version}/view',             [ApprovalController::class, 'view'])
             ->whereNumber('version')->name('view');
 
@@ -182,7 +177,7 @@ Route::middleware('auth')->group(function () {
             ->whereNumber('version')->name('reject');
     });
 
-    // Optional alias route
+    // Optional alias for approval queue
     Route::get('/approval-queue', [ApprovalController::class, 'index'])->name('approval.queue');
 
     /*
@@ -211,7 +206,7 @@ Route::middleware('auth')->group(function () {
 |--------------------------------------------------------------------------
 |
 | These routes are intentionally public so they can be referenced without auth.
-| If you want them protected, move them inside the auth group above.
+| Move them inside the auth group if you want protection.
 |
 */
 Route::get('/departments', [DepartmentController::class, 'index'])->name('departments.index');
