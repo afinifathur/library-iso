@@ -16,9 +16,6 @@ use Illuminate\Support\Facades\Schema;
 
 /**
  * DocumentController (versi bersih & defensif)
- *
- * - Fokus pada validasi, fallback disk, pengecekan kolom dinamis, dan penanganan file dengan aman.
- * - Asumsikan route middleware 'auth' sudah diterapkan di route file.
  */
 class DocumentController extends Controller
 {
@@ -514,9 +511,8 @@ class DocumentController extends Controller
             $version->save();
         }
 
-        // update document metadata (revision meta only)
-        $document->revision_number = max(1, (int)($document->revision_number ?? 0) + 1);
-        $document->revision_date = now();
+        // IMPORTANT: do NOT touch current_version_id/revision_number/revision_date for drafts/uploads.
+        // Only update non-version metadata like title/department if uploader intended it.
         $document->title = $validated['title'];
         $document->department_id = (int)$validated['department_id'];
         $document->save();
@@ -661,8 +657,37 @@ class DocumentController extends Controller
     {
         $document->load(['department', 'versions.creator']);
 
+        // prefer version specified via query string (explicit)
+        $requestedVersionId = null;
+        try {
+            $requestedVersionId = request()->query('version_id') ? (int) request()->query('version_id') : null;
+        } catch (\Throwable) {
+            $requestedVersionId = null;
+        }
+
+        $version = null;
+
+        // 1) if explicit version requested, use it (if it belongs to document)
+        if ($requestedVersionId) {
+            $version = $document->versions()->where('id', $requestedVersionId)->first();
+        }
+
+        // 2) else prefer the document's currentVersion (promoted / approved)
+        if (! $version && isset($document->current_version_id) && $document->current_version_id) {
+            $version = $document->versions()->where('id', $document->current_version_id)->first();
+        }
+
+        // 3) else use the most recent approved version
+        if (! $version) {
+            $version = $document->versions()->where('status', 'approved')->orderByDesc('id')->first();
+        }
+
+        // 4) fallback: any version (draft/rejected) — but mark as draft view
+        if (! $version) {
+            $version = $document->versions()->orderByDesc('id')->first();
+        }
+
         $versions = $document->versions->sortByDesc('id')->values();
-        $version = $versions->first() ?: null;
 
         // relatedLinks normalization (safe)
         $relatedLinks = [];
@@ -724,183 +749,154 @@ class DocumentController extends Controller
             ]));
         }
     }
-/**
- * Download master file (doc/docx) associated with a version.
- * Tries candidate paths across available disks (documents -> public).
- */
-public function downloadMaster(DocumentVersion $version)
-{
-    // require auth (route usually inside auth middleware)
-    $user = request()->user();
-    if (! $user) {
-        abort(403, 'Login required.');
-    }
 
-    // Prepare disks: prefer controller helper getAvailableDisks() if exists
-    if (method_exists($this, 'getAvailableDisks')) {
-        $disks = $this->getAvailableDisks();
-    } else {
-        $disks = [];
-        try { $disks[] = Storage::disk('documents'); } catch (\Throwable) {}
-        try { $disks[] = Storage::disk('public'); } catch (\Throwable) {}
-    }
+    public function downloadMaster(DocumentVersion $version)
+    {
+        $user = request()->user();
+        if (! $user) {
+            abort(403, 'Login required.');
+        }
 
-    // Candidate paths in order of preference
-    $candidates = [
-        $version->master_path ?? null,
-        $version->document?->master_path ?? null,
-        $version->file_path ?? null,
-        $version->document?->file_path ?? null,
-    ];
+        if (method_exists($this, 'getAvailableDisks')) {
+            $disks = $this->getAvailableDisks();
+        } else {
+            $disks = [];
+            try { $disks[] = Storage::disk('documents'); } catch (\Throwable) {}
+            try { $disks[] = Storage::disk('public'); } catch (\Throwable) {}
+        }
 
-    foreach ($disks as $disk) {
-        foreach ($candidates as $p) {
-            if (empty($p)) {
-                continue;
-            }
+        $candidates = [
+            $version->master_path ?? null,
+            $version->document?->master_path ?? null,
+            $version->file_path ?? null,
+            $version->document?->file_path ?? null,
+        ];
 
-            $path = ltrim($p, '/');
+        foreach ($disks as $disk) {
+            foreach ($candidates as $p) {
+                if (empty($p)) continue;
+                $path = ltrim($p, '/');
 
-            // safe exists check (use helper if present)
-            $exists = (method_exists($this, 'safeDiskCall'))
-                ? $this->safeDiskCall(fn() => $disk->exists($path))
-                : (function() use ($disk, $path) { try { return $disk->exists($path); } catch (\Throwable) { return false; } })();
+                $exists = (method_exists($this, 'safeDiskCall'))
+                    ? $this->safeDiskCall(fn() => $disk->exists($path))
+                    : (function() use ($disk, $path) { try { return $disk->exists($path); } catch (\Throwable) { return false; } })();
 
-            if (! $exists) {
-                continue;
-            }
+                if (! $exists) continue;
 
-            // best-effort audit
-            if (method_exists($this, 'maybeAudit')) {
-                $this->maybeAudit('download_master', $user->id ?? null, $version->document_id ?? null, $version->id, request()->ip(), ['path' => $path]);
-            }
-
-            // try native download first
-            try {
-                return $disk->download($path, basename($path));
-            } catch (\Throwable $e) {
-                // fallback to streaming if download() not supported or failed
-                $stream = (method_exists($this, 'safeDiskCall'))
-                    ? $this->safeDiskCall(fn() => $disk->readStream($path))
-                    : (function() use ($disk, $path) { try { return $disk->readStream($path); } catch (\Throwable) { return false; } })();
-
-                if ($stream === false || $stream === null) {
-                    // can't stream this file on this disk, try next candidate
-                    continue;
+                if (method_exists($this, 'maybeAudit')) {
+                    $this->maybeAudit('download_master', $user->id ?? null, $version->document_id ?? null, $version->id, request()->ip(), ['path' => $path]);
                 }
 
-                $size = (method_exists($this, 'safeDiskCall'))
-                    ? $this->safeDiskCall(fn() => $disk->size($path))
-                    : (function() use ($disk, $path) { try { return $disk->size($path); } catch (\Throwable) { return null; } })();
+                try {
+                    return $disk->download($path, basename($path));
+                } catch (\Throwable $e) {
+                    $stream = (method_exists($this, 'safeDiskCall'))
+                        ? $this->safeDiskCall(fn() => $disk->readStream($path))
+                        : (function() use ($disk, $path) { try { return $disk->readStream($path); } catch (\Throwable) { return false; } })();
+
+                    if ($stream === false || $stream === null) {
+                        continue;
+                    }
+
+                    $size = (method_exists($this, 'safeDiskCall'))
+                        ? $this->safeDiskCall(fn() => $disk->size($path))
+                        : (function() use ($disk, $path) { try { return $disk->size($path); } catch (\Throwable) { return null; } })();
+
+                    $mime = (method_exists($this, 'safeDiskCall'))
+                        ? $this->safeDiskCall(fn() => $disk->mimeType($path))
+                        : (function() use ($disk, $path) { try { return $disk->mimeType($path); } catch (\Throwable) { return null; } })();
+
+                    return response()->stream(function () use ($stream) {
+                        @fpassthru($stream);
+                        if (is_resource($stream)) {
+                            @fclose($stream);
+                        }
+                    }, 200, array_filter([
+                        'Content-Type' => $mime ?: 'application/octet-stream',
+                        'Content-Length' => $size,
+                        'Content-Disposition' => 'attachment; filename="'.basename($path).'"',
+                        'Cache-Control' => 'private, max-age=0, must-revalidate',
+                    ]));
+                }
+            }
+        }
+
+        abort(404, 'Master file not found.');
+    }
+
+    public function previewVersion(DocumentVersion $version)
+    {
+        $user = request()->user();
+        if (! $user) {
+            abort(403, 'Login required.');
+        }
+
+        if (method_exists($this, 'getAvailableDisks')) {
+            $disks = $this->getAvailableDisks();
+        } else {
+            $disks = [];
+            try { $disks[] = Storage::disk('documents'); } catch (\Throwable) {}
+            try { $disks[] = Storage::disk('public'); } catch (\Throwable) {}
+        }
+
+        $candidates = [
+            $version->file_path ?? null,
+            $version->pdf_path ?? null,
+            $version->master_path ?? null,
+        ];
+
+        foreach ($disks as $disk) {
+            foreach ($candidates as $p) {
+                if (empty($p)) continue;
+                $path = ltrim($p, '/');
+
+                $exists = (method_exists($this, 'safeDiskCall'))
+                    ? $this->safeDiskCall(fn() => $disk->exists($path))
+                    : (function() use ($disk, $path) { try { return $disk->exists($path); } catch (\Throwable) { return false; } })();
+
+                if (! $exists) continue;
 
                 $mime = (method_exists($this, 'safeDiskCall'))
                     ? $this->safeDiskCall(fn() => $disk->mimeType($path))
                     : (function() use ($disk, $path) { try { return $disk->mimeType($path); } catch (\Throwable) { return null; } })();
 
-                return response()->stream(function () use ($stream) {
-                    @fpassthru($stream);
-                    if (is_resource($stream)) {
-                        @fclose($stream);
+                $ext  = strtolower(pathinfo($path, PATHINFO_EXTENSION));
+
+                if ($mime === 'application/pdf' || $ext === 'pdf') {
+                    $stream = (method_exists($this, 'safeDiskCall'))
+                        ? $this->safeDiskCall(fn() => $disk->readStream($path))
+                        : (function() use ($disk, $path) { try { return $disk->readStream($path); } catch (\Throwable) { return false; } })();
+
+                    if ($stream === false || $stream === null) {
+                        continue;
                     }
-                }, 200, array_filter([
-                    'Content-Type' => $mime ?: 'application/octet-stream',
-                    'Content-Length' => $size,
-                    'Content-Disposition' => 'attachment; filename="'.basename($path).'"',
-                    'Cache-Control' => 'private, max-age=0, must-revalidate',
-                ]));
+
+                    $size = (method_exists($this, 'safeDiskCall'))
+                        ? $this->safeDiskCall(fn() => $disk->size($path))
+                        : (function() use ($disk, $path) { try { return $disk->size($path); } catch (\Throwable) { return null; } })();
+
+                    if (method_exists($this, 'maybeAudit')) {
+                        $this->maybeAudit('preview_pdf', $user->id ?? null, $version->document_id ?? null, $version->id, request()->ip(), ['path' => $path]);
+                    }
+
+                    return response()->stream(function () use ($stream) {
+                        @fpassthru($stream);
+                        if (is_resource($stream)) {
+                            @fclose($stream);
+                        }
+                    }, 200, array_filter([
+                        'Content-Type' => 'application/pdf',
+                        'Content-Length' => $size,
+                        'Content-Disposition' => 'inline; filename="'.basename($path).'"',
+                        'Cache-Control' => 'public, max-age=0, must-revalidate',
+                    ]));
+                }
             }
         }
+
+        abort(404, 'PDF preview not available for this version.');
     }
 
-    abort(404, 'Master file not found.');
-}
-
-/**
- * Preview a version inline — ONLY serve PDF inline.
- * Non-PDF files are skipped intentionally to avoid forcing downloads inside iframe.
- */
-public function previewVersion(DocumentVersion $version)
-{
-    // require auth
-    $user = request()->user();
-    if (! $user) {
-        abort(403, 'Login required.');
-    }
-
-    // Prepare disks (helper or fallback)
-    if (method_exists($this, 'getAvailableDisks')) {
-        $disks = $this->getAvailableDisks();
-    } else {
-        $disks = [];
-        try { $disks[] = Storage::disk('documents'); } catch (\Throwable) {}
-        try { $disks[] = Storage::disk('public'); } catch (\Throwable) {}
-    }
-
-    // Candidate fields (prefer file_path/pdf_path then master)
-    $candidates = [
-        $version->file_path ?? null,
-        $version->pdf_path ?? null,
-        $version->master_path ?? null,
-    ];
-
-    foreach ($disks as $disk) {
-        foreach ($candidates as $p) {
-            if (empty($p)) continue;
-            $path = ltrim($p, '/');
-
-            $exists = (method_exists($this, 'safeDiskCall'))
-                ? $this->safeDiskCall(fn() => $disk->exists($path))
-                : (function() use ($disk, $path) { try { return $disk->exists($path); } catch (\Throwable) { return false; } })();
-
-            if (! $exists) continue;
-
-            $mime = (method_exists($this, 'safeDiskCall'))
-                ? $this->safeDiskCall(fn() => $disk->mimeType($path))
-                : (function() use ($disk, $path) { try { return $disk->mimeType($path); } catch (\Throwable) { return null; } })();
-
-            $ext  = strtolower(pathinfo($path, PATHINFO_EXTENSION));
-
-            // Only allow PDF inline preview
-            if ($mime === 'application/pdf' || $ext === 'pdf') {
-                $stream = (method_exists($this, 'safeDiskCall'))
-                    ? $this->safeDiskCall(fn() => $disk->readStream($path))
-                    : (function() use ($disk, $path) { try { return $disk->readStream($path); } catch (\Throwable) { return false; } })();
-
-                if ($stream === false || $stream === null) {
-                    continue;
-                }
-
-                $size = (method_exists($this, 'safeDiskCall'))
-                    ? $this->safeDiskCall(fn() => $disk->size($path))
-                    : (function() use ($disk, $path) { try { return $disk->size($path); } catch (\Throwable) { return null; } })();
-
-                // best-effort audit
-                if (method_exists($this, 'maybeAudit')) {
-                    $this->maybeAudit('preview_pdf', $user->id ?? null, $version->document_id ?? null, $version->id, request()->ip(), ['path' => $path]);
-                }
-
-                return response()->stream(function () use ($stream) {
-                    @fpassthru($stream);
-                    if (is_resource($stream)) {
-                        @fclose($stream);
-                    }
-                }, 200, array_filter([
-                    'Content-Type' => 'application/pdf',
-                    'Content-Length' => $size,
-                    'Content-Disposition' => 'inline; filename="'.basename($path).'"',
-                    'Cache-Control' => 'public, max-age=0, must-revalidate',
-                ]));
-            }
-
-            // non-pdf: skip to next candidate (do not attempt to preview inline)
-        }
-    }
-
-    // no PDF candidate found
-    abort(404, 'PDF preview not available for this version.');
-}
-
-    
     /* ==========================
      * HELPERS
      * ========================== */
@@ -1008,7 +1004,6 @@ public function previewVersion(DocumentVersion $version)
     protected function extractPdfText(DocumentVersion $version): ?string
     {
         try {
-            // Expect an application service/command that extracts text (best-effort).
             if (! class_exists(\App\Console\Commands\ExtractDocumentTextCommand::class)) return null;
             $extractor = app()->make(\App\Console\Commands\ExtractDocumentTextCommand::class);
             $text = $extractor->extractTextForVersion($version, env('PDFTOTEXT_PATH', 'pdftotext'));

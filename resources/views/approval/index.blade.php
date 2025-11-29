@@ -1,4 +1,3 @@
-{{-- resources/views/approval/index.blade.php --}}
 @extends('layouts.iso')
 
 @section('title', 'Approval Queue')
@@ -94,7 +93,7 @@
 
                         <td>
                             <div class="action-buttons" style="display:flex;gap:6px;flex-wrap:wrap">
-                                <!-- Open (no inline JS; data attributes used) -->
+                                {{-- Open (no inline JS; data attributes used) --}}
                                 @if(!empty($v->id))
                                     <a href="{{ route('versions.show', $v->id) }}"
                                        target="_blank"
@@ -108,23 +107,34 @@
                                     <button class="btn btn-outline-primary btn-sm" disabled>Open</button>
                                 @endif
 
-                                <!-- Compare (single) -->
+                                {{-- Compare (single) --}}
                                 @if($docId)
-                                    <a href="{{ route('documents.compare', $docId) }}?v2={{ $v->id }}" target="_blank" rel="noopener noreferrer" class="btn btn-outline-secondary btn-sm action-compare" aria-label="Compare version {{ e($versionLabel) }}">Compare</a>
+                                    <a href="{{ route('documents.compare', $docId) }}?v2={{ $v->id }}"
+                                       target="_blank"
+                                       rel="noopener noreferrer"
+                                       class="btn btn-outline-secondary btn-sm action-compare"
+                                       aria-label="Compare version {{ e($versionLabel) }}">
+                                        Compare
+                                    </a>
                                 @else
                                     <button class="btn btn-outline-secondary btn-sm" disabled>Compare</button>
                                 @endif
 
-                                <!-- Approve (form) -->
-                                <form method="POST" action="{{ route('approval.approve', $v->id) }}" class="d-inline-block action-form-approve" style="display:inline">
+                                {{-- Approve (form) - tombol sekarang default AKTIF --}}
+                                <form method="POST"
+                                      action="{{ route('approval.approve', $v->id) }}"
+                                      class="d-inline-block action-form-approve"
+                                      style="display:inline">
                                     @csrf
-                                    <button type="submit" class="btn btn-success btn-sm btn-approve" disabled aria-disabled="true">Approve</button>
+                                    <button type="submit"
+                                            class="btn btn-success btn-sm btn-approve">
+                                        Approve
+                                    </button>
                                 </form>
 
-                                <!-- Reject -->
+                                {{-- Reject - tombol sekarang default AKTIF --}}
                                 <button type="button"
                                         class="btn btn-danger btn-sm btn-reject"
-                                        disabled
                                         data-version-id="{{ e($v->id) }}"
                                         data-doc-code="{{ e($docCode) }}"
                                         aria-label="Reject version {{ e($versionLabel) }}">
@@ -147,25 +157,48 @@
     </div>
 </div>
 
-<!-- Reject Modal -->
-<div id="rejectModal" class="modal-overlay" aria-hidden="true" style="display:none;position:fixed;inset:0;align-items:center;justify-content:center;background:rgba(0,0,0,0.35);z-index:9999;">
-  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="rejectModalTitle" style="background:#fff;border-radius:8px;width:90%;max-width:680px;padding:18px;">
+{{-- Reject Modal --}}
+<div id="rejectModal"
+     class="modal-overlay"
+     aria-hidden="true"
+     style="display:none;position:fixed;inset:0;align-items:center;justify-content:center;background:rgba(0,0,0,0.35);z-index:9999;">
+  <div class="modal-card"
+       role="dialog"
+       aria-modal="true"
+       aria-labelledby="rejectModalTitle"
+       style="background:#fff;border-radius:8px;width:90%;max-width:680px;padding:18px;">
     <div class="modal-header" style="display:flex;justify-content:space-between;align-items:center">
-      <h3 id="rejectModalTitle" style="margin:0">Alasan Reject <span id="rejectDocCode" class="fw-bold"></span></h3>
-      <button class="modal-close" type="button" onclick="closeRejectModal()" aria-label="Close" style="background:none;border:0;font-size:22px;line-height:1;cursor:pointer">×</button>
+      <h3 id="rejectModalTitle" style="margin:0">
+          Alasan Reject <span id="rejectDocCode" class="fw-bold"></span>
+      </h3>
+      <button class="modal-close"
+              type="button"
+              onclick="closeRejectModal()"
+              aria-label="Close"
+              style="background:none;border:0;font-size:22px;line-height:1;cursor:pointer">
+        ×
+      </button>
     </div>
 
     <div class="modal-body" style="margin-top:12px;">
       <form id="rejectForm" onsubmit="return false;">
         <div class="form-row">
-          <label for="reject_reason">Alasan reject <small class="text-muted">(wajib diisi)</small></label>
-          <textarea id="reject_reason" name="rejected_reason" class="form-textarea" rows="6" required style="width:100%;padding:8px;border:1px solid #e6eef8;border-radius:6px;"></textarea>
+          <label for="reject_reason">
+              Alasan reject <small class="text-muted">(wajib diisi)</small>
+          </label>
+          <textarea id="reject_reason"
+                    name="rejected_reason"
+                    class="form-textarea"
+                    rows="6"
+                    required
+                    style="width:100%;padding:8px;border:1px solid #e6eef8;border-radius:6px;"></textarea>
         </div>
         <input type="hidden" id="reject_version_id" name="version_id" value="">
       </form>
     </div>
 
-    <div class="modal-footer" style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px;">
+    <div class="modal-footer"
+         style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px;">
       <button class="btn btn-muted" type="button" onclick="closeRejectModal()">Batal</button>
       <button id="rejectSubmitBtn" class="btn btn-danger" type="button">Submit Reject</button>
     </div>
@@ -215,17 +248,24 @@
   // Persist open state (still kept, optional)
   function persistOpened(vid) {
     if (!vid) return;
-    try { localStorage.setItem('iso_opened_version_' + vid, '1'); } catch (e) {}
+    try {
+      localStorage.setItem('iso_opened_version_' + vid, '1');
+    } catch (e) {}
   }
+
   function isPersistedOpened(vid) {
-    try { return !!localStorage.getItem('iso_opened_version_' + vid); } catch (e) { return false; }
+    try {
+      return !!localStorage.getItem('iso_opened_version_' + vid);
+    } catch (e) {
+      return false;
+    }
   }
 
   // ---------- Open handlers ----------
   function attachOpenHandlers() {
     qsa('.action-open').forEach(link => {
       if (!markAttached(link, 'isoOpenAttached')) return;
-      link.addEventListener('click', function (ev) {
+      link.addEventListener('click', function () {
         try {
           const tr = this.closest('tr');
           const vid = tr?.dataset?.versionId;
@@ -237,7 +277,9 @@
               window.opener.postMessage({ iso_action: 'version_opened', version_id: vid }, '*');
             }
           } catch (e) {}
-        } catch (e) { console.warn('open handler error', e); }
+        } catch (e) {
+          console.warn('open handler error', e);
+        }
       }, { passive: true });
 
       link.addEventListener('auxclick', function (ev) {
@@ -256,12 +298,10 @@
   }
 
   // ---------- Approve guard (DISABLED for MVP) ----------
-  // For now: do not block approve submits. Keep handler to attach only (no prevention).
   function attachApproveGuards() {
     qsa('form.action-form-approve').forEach(form => {
       if (!markAttached(form, 'isoApproveGuard')) return;
-      // no blocking check here for MVP — allow submit immediately
-      form.addEventListener('submit', function (ev) {
+      form.addEventListener('submit', function () {
         // no guard: allow submit
       });
     });
@@ -275,9 +315,11 @@
         const tr = this.closest('tr');
         const vid = tr?.dataset?.versionId;
         const docCode = this.getAttribute('data-doc-code') || '';
-        if (!vid) { alert('Version ID tidak terdeteksi.'); return; }
+        if (!vid) {
+          alert('Version ID tidak terdeteksi.');
+          return;
+        }
 
-        // NOTE: we no longer require doc to be opened — MVP enables reject immediately
         const versionInput = qs('#reject_version_id');
         const reasonTextarea = qs('#reject_reason');
         const docLabel = qs('#rejectDocCode');
@@ -295,8 +337,12 @@
       if (!el) return;
       el.style.display = 'flex';
       el.setAttribute('aria-hidden', 'false');
-      setTimeout(() => { const t = qs('#reject_reason'); if (t) t.focus(); }, 50);
+      setTimeout(() => {
+        const t = qs('#reject_reason');
+        if (t) t.focus();
+      }, 50);
     };
+
     window.closeRejectModal = () => {
       const el = qs('#rejectModal');
       if (!el) return;
@@ -307,7 +353,9 @@
     document.addEventListener('keydown', function (e) {
       if (e.key === 'Escape') {
         const modal = qs('#rejectModal');
-        if (modal && modal.style.display === 'flex') closeRejectModal();
+        if (modal && modal.style.display === 'flex') {
+          closeRejectModal();
+        }
       }
     });
 
@@ -318,8 +366,14 @@
         const vid = qs('#reject_version_id')?.value;
         const reason = qs('#reject_reason')?.value?.trim();
 
-        if (!vid) { alert('Version ID tidak terdeteksi.'); return; }
-        if (!reason) { alert('Alasan reject wajib diisi.'); return; }
+        if (!vid) {
+          alert('Version ID tidak terdeteksi.');
+          return;
+        }
+        if (!reason) {
+          alert('Alasan reject wajib diisi.');
+          return;
+        }
 
         btn.disabled = true;
         btn.textContent = 'Submitting...';
@@ -335,7 +389,7 @@
         })
         .then(async res => {
           const ct = res.headers.get('content-type') || '';
-          const payload = ct.includes('application/json') ? await res.json().catch(()=>({})) : {};
+          const payload = ct.includes('application/json') ? await res.json().catch(() => ({})) : {};
           if (res.ok) {
             closeRejectModal();
             alert(payload.message || 'Version berhasil direject.');
@@ -361,7 +415,9 @@
     const selectAll = qs('#selectAll');
     if (!selectAll || !markAttached(selectAll, 'isoSelectAll')) return;
     selectAll.addEventListener('change', function () {
-      qsa('.select-version').forEach(cb => { cb.checked = this.checked; });
+      qsa('.select-version').forEach(cb => {
+        cb.checked = this.checked;
+      });
     });
   }
 
@@ -371,16 +427,25 @@
 
     compareBtn.addEventListener('click', function () {
       const checked = qsa('.select-version:checked');
-      if (checked.length < 2) { alert('Pilih minimal 2 versi dari dokumen yang sama untuk membandingkan.'); return; }
+      if (checked.length < 2) {
+        alert('Pilih minimal 2 versi dari dokumen yang sama untuk membandingkan.');
+        return;
+      }
 
       const docs = checked.map(c => c.dataset.doc);
       const firstDoc = docs[0];
       const allSame = docs.every(d => d === firstDoc);
-      if (!allSame) { alert('Silakan pilih versi yang berasal dari DOKUMEN yang SAMA untuk membandingkan.'); return; }
+      if (!allSame) {
+        alert('Silakan pilih versi yang berasal dari DOKUMEN yang SAMA untuk membandingkan.');
+        return;
+      }
 
       const versionIds = checked.map(c => c.value);
       const docId = firstDoc;
-      const url = new URL(`${BASE_DOCUMENTS_URL}/${encodeURIComponent(docId)}/compare`, window.location.origin);
+      const url = new URL(
+        `${BASE_DOCUMENTS_URL}/${encodeURIComponent(docId)}/compare`,
+        window.location.origin
+      );
       versionIds.forEach(id => url.searchParams.append('versions[]', id));
       window.open(url.toString(), '_blank', 'noopener');
     });
@@ -399,7 +464,9 @@
     // still apply persisted flags visually if present
     qsa('tr[data-version-id]').forEach(tr => {
       const vid = tr.dataset.versionId;
-      if (vid && isPersistedOpened(vid)) enableByVersionId(vid);
+      if (vid && isPersistedOpened(vid)) {
+        enableByVersionId(vid);
+      }
     });
   }
 

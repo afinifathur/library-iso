@@ -1,4 +1,3 @@
-{{-- resources/views/layouts/simple.blade.php --}}
 <!DOCTYPE html>
 <html lang="id">
 <head>
@@ -16,34 +15,125 @@
             --muted: #6b7280;
         }
 
-        html,body{ height:100%; margin:0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; color:#111; background:var(--bg); }
+        html,body{
+            height:100%;
+            margin:0;
+            font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+            color:#111;
+            background:var(--bg);
+        }
 
-        .container{ max-width:1200px; margin:0 auto; padding:0 20px; box-sizing:border-box; }
+        .container{
+            max-width:1200px;
+            margin:0 auto;
+            padding:0 20px;
+            box-sizing:border-box;
+        }
 
         /* Topbar */
-        .topbar{ background:#fff; border-bottom:1px solid var(--line); position:sticky; top:0; z-index:200; }
-        .nav{ display:flex; justify-content:space-between; align-items:center; height:72px; gap:12px; }
+        .topbar{
+            background:#fff;
+            border-bottom:1px solid var(--line);
+            position:sticky;
+            top:0;
+            z-index:200;
+        }
+        .nav{
+            display:flex;
+            justify-content:space-between;
+            align-items:center;
+            height:72px;
+            gap:12px;
+        }
 
-        .brand-wrap{ display:flex; align-items:center; gap:14px; text-decoration:none; color:inherit; }
-        .brand-wrap img{ width:50px; height:50px; object-fit:contain; }
-        .brand-title{ font-size:20px; font-weight:700; line-height:1; }
-        .brand-sub{ font-size:12px; color:var(--muted); margin-top:2px; }
+        .brand-wrap{
+            display:flex;
+            align-items:center;
+            gap:14px;
+            text-decoration:none;
+            color:inherit;
+        }
+        .brand-wrap img{
+            width:50px;
+            height:50px;
+            object-fit:contain;
+        }
+        .brand-title{
+            font-size:20px;
+            font-weight:700;
+            line-height:1;
+        }
+        .brand-sub{
+            font-size:12px;
+            color:var(--muted);
+            margin-top:2px;
+        }
 
         /* Menu */
-        .menu{ display:flex; gap:22px; align-items:center; }
-        .menu a{ text-decoration:none; font-weight:600; color:#333; padding:8px 4px; border-radius:4px; }
+        .menu{
+            display:flex;
+            gap:22px;
+            align-items:center;
+        }
+        .menu a{
+            text-decoration:none;
+            font-weight:600;
+            color:#333;
+            padding:8px 4px;
+            border-radius:4px;
+        }
         .menu a:hover{ color:var(--brand); }
-        .menu a.active{ color:var(--brand); border-bottom:2px solid var(--brand); padding-bottom:6px; }
+        .menu a.active{
+            color:var(--brand);
+            border-bottom:2px solid var(--brand);
+            padding-bottom:6px;
+        }
 
         /* User menu */
         .user-menu{ position:relative; }
-        .user-btn{ background:#eef0f3; border:1px solid #d1d5db; padding:8px 14px; border-radius:6px; cursor:pointer; font-weight:600; text-transform:lowercase; }
-        .dropdown-menu{ display:none; position:absolute; right:0; top:110%; background:#fff; border:1px solid #d1d5db; border-radius:6px; min-width:130px; z-index:1000; box-shadow:0 8px 24px rgba(15,23,42,0.08); }
-        .dropdown-menu button{ display:block; width:100%; padding:10px 14px; border:none; background:none; text-align:left; cursor:pointer; font-size:14px; color:#333; }
+        .user-btn{
+            background:#eef0f3;
+            border:1px solid #d1d5db;
+            padding:8px 14px;
+            border-radius:6px;
+            cursor:pointer;
+            font-weight:600;
+            text-transform:lowercase;
+        }
+        .dropdown-menu{
+            display:none;
+            position:absolute;
+            right:0;
+            top:110%;
+            background:#fff;
+            border:1px solid #d1d5db;
+            border-radius:6px;
+            min-width:130px;
+            z-index:1000;
+            box-shadow:0 8px 24px rgba(15,23,42,0.08);
+        }
+        .dropdown-menu button{
+            display:block;
+            width:100%;
+            padding:10px 14px;
+            border:none;
+            background:none;
+            text-align:left;
+            cursor:pointer;
+            font-size:14px;
+            color:#333;
+        }
         .dropdown-menu button:hover{ background:#f2f6ff; color:var(--brand); }
 
         /* Page card */
-        .page{ background:var(--card); margin-top:20px; padding:20px; border-radius:14px; border:1px solid var(--line); box-sizing:border-box; }
+        .page{
+            background:var(--card);
+            margin-top:20px;
+            padding:20px;
+            border-radius:14px;
+            border:1px solid var(--line);
+            box-sizing:border-box;
+        }
 
         /* small responsive */
         @media (max-width:800px) {
@@ -117,18 +207,28 @@
 @yield('scripts')
 @stack('scripts')
 
-{{-- Minimal dropdown script + global approval helper (patch) --}}
+{{-- Minimal dropdown script + global approval helper (force-enable for MVP) --}}
 <script>
 document.addEventListener("DOMContentLoaded", function () {
-    // Dropdown toggle
+    // ---------- Dropdown toggle ----------
     (function(){
         const wrapper = document.querySelector('.user-menu.dropdown');
         if (!wrapper) return;
         const toggle = wrapper.querySelector('.dropdown-toggle');
         const menu = wrapper.querySelector('.dropdown-menu');
 
-        function closeMenu(){ if (menu) { menu.style.display = 'none'; menu.setAttribute('aria-hidden', 'true'); toggle.setAttribute('aria-expanded','false'); } }
-        function openMenu(){ if (menu) { menu.style.display = 'block'; menu.setAttribute('aria-hidden', 'false'); toggle.setAttribute('aria-expanded','true'); } }
+        function closeMenu(){
+            if (!menu) return;
+            menu.style.display = 'none';
+            menu.setAttribute('aria-hidden', 'true');
+            toggle.setAttribute('aria-expanded','false');
+        }
+        function openMenu(){
+            if (!menu) return;
+            menu.style.display = 'block';
+            menu.setAttribute('aria-hidden', 'false');
+            toggle.setAttribute('aria-expanded','true');
+        }
 
         toggle.addEventListener('click', function (e) {
             e.stopPropagation();
@@ -137,7 +237,7 @@ document.addEventListener("DOMContentLoaded", function () {
         });
 
         document.addEventListener('click', function (e) {
-            if (!e.target.closest('.dropdown')) closeMenu();
+            if (!e.target.closest('.user-menu')) closeMenu();
         });
 
         document.addEventListener('keydown', function (e) {
@@ -145,102 +245,123 @@ document.addEventListener("DOMContentLoaded", function () {
         });
     })();
 
-    // Global approval helper (patch) — ensure "Open" flags work site-wide
+    // ---------- Global approval helper (site-wide) ----------
     (function(){
-      try {
         const DEBUG = false;
 
         function enableRowForVersion(vid) {
-  document.querySelectorAll(`tr[data-version-id="${vid}"]`).forEach(tr=>{
-    tr.classList.add('iso-opened-row');
-    tr.querySelectorAll('.btn-approve, .btn-reject').forEach(btn=>{
-      btn.removeAttribute('disabled');
-    });
-  });
-}
-
+            if (!vid) return;
+            document.querySelectorAll(`tr[data-version-id="${vid}"]`).forEach(tr=>{
+                tr.classList.add('iso-opened-row');
+                tr.querySelectorAll('.btn-approve, .btn-reject').forEach(btn=>{
+                    btn.removeAttribute('disabled');
+                    btn.removeAttribute('aria-disabled');
+                });
+                tr.querySelectorAll('.select-version').forEach(cb => cb.disabled = false);
+            });
+        }
 
         function attachOpenHandlers() {
-          const links = Array.from(document.querySelectorAll('.action-open'));
-          links.forEach(link => {
-            if (link.__isoAttached) return;
-            link.__isoAttached = true;
+            const links = Array.from(document.querySelectorAll('.action-open'));
+            links.forEach(link => {
+                if (link.__isoAttached) return;
+                link.__isoAttached = true;
 
-            link.addEventListener('click', function (ev) {
-              try {
-                const tr = this.closest('tr');
-                const vid = tr?.dataset?.versionId || this.dataset?.versionId;
-                if (!vid) return;
-                try { localStorage.setItem('iso_opened_version_' + vid, '1'); } catch(e){}
-                try { enableRowForVersion(String(vid)); } catch(e){}
-                try {
-                  if (window.opener && !window.opener.closed) {
-                    window.opener.postMessage({ iso_action: 'version_opened', version_id: String(vid) }, '*');
-                  }
-                } catch(e){}
-              } catch(e){ if (DEBUG) console.error('iso open handler', e); }
-              // allow navigation (open in new tab)
-            }, {passive:true});
+                link.addEventListener('click', function () {
+                    try {
+                        const tr = this.closest('tr');
+                        const vid = tr?.dataset?.versionId || this.dataset?.versionId;
+                        if (!vid) return;
+                        try { localStorage.setItem('iso_opened_version_' + vid, '1'); } catch(e){}
+                        enableRowForVersion(String(vid));
+                        try {
+                            if (window.opener && !window.opener.closed) {
+                                window.opener.postMessage({ iso_action: 'version_opened', version_id: String(vid) }, '*');
+                            }
+                        } catch(e){}
+                    } catch(e){ if (DEBUG) console.error('iso open handler', e); }
+                    // allow navigation to continue
+                }, {passive:true});
 
-            // support middle-click
-            link.addEventListener('auxclick', function(ev){ if (ev.button === 1) {
-              const tr = this.closest('tr');
-              const vid = tr?.dataset?.versionId || this.dataset?.versionId;
-              if (vid) { try { localStorage.setItem('iso_opened_version_' + vid, '1'); } catch(e){}; enableRowForVersion(String(vid)); }
-            }}, {passive:true});
-          });
+                // middle-click
+                link.addEventListener('auxclick', function(ev){
+                    if (ev.button === 1) {
+                        const tr = this.closest('tr');
+                        const vid = tr?.dataset?.versionId || this.dataset?.versionId;
+                        if (vid) {
+                            try { localStorage.setItem('iso_opened_version_' + vid, '1'); } catch(e){}
+                            enableRowForVersion(String(vid));
+                        }
+                    }
+                }, {passive:true});
+            });
         }
 
-        // Handle messages from other tabs/windows
+        // listen cross-window/tab messages
         window.addEventListener('message', function(ev){
-          try {
-            const d = ev.data || {};
-            if (d && d.iso_action === 'version_opened' && d.version_id) {
-              enableRowForVersion(String(d.version_id));
-            }
-          } catch(e){}
+            try {
+                const d = ev.data || {};
+                if (d && d.iso_action === 'version_opened' && d.version_id) {
+                    enableRowForVersion(String(d.version_id));
+                }
+            } catch(e){}
         });
 
-        // Handle storage events (other tabs)
+        // listen storage events (other tabs)
         window.addEventListener('storage', function(ev){
-          if (!ev.key) return;
-          if (ev.key.startsWith('iso_opened_version_') && ev.newValue) {
-            const vid = ev.key.replace('iso_opened_version_', '');
-            enableRowForVersion(String(vid));
-          }
+            if (!ev.key) return;
+            if (ev.key.startsWith('iso_opened_version_') && ev.newValue) {
+                const vid = ev.key.replace('iso_opened_version_', '');
+                enableRowForVersion(String(vid));
+            }
         });
 
-        // Prevent approve form submit unless opened (DISABLED FOR MVP)
-function attachApproveGuards() {
-  // do nothing — allow approve & reject immediately
-  return;
-}
-
-        
-
-        // Initialize
-        function initAll() {
-          attachOpenHandlers();
-          attachApproveGuards();
-
-          // apply existing flags
-          document.querySelectorAll('tr[data-version-id]').forEach(tr=>{
-            const v = tr.dataset.versionId;
-            try { if (localStorage.getItem('iso_opened_version_' + v)) enableRowForVersion(String(v)); } catch(e){}
-          });
+        // Approve guard: disabled for MVP (allow immediate approve/reject)
+        function attachApproveGuards() {
+            // intentionally empty for MVP
         }
 
-        if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initAll);
-        else initAll();
+        // Force-enable approve/reject + checkboxes on load (MVP)
+        function forceEnableApprovalButtons() {
+            document.querySelectorAll('.btn-approve, .btn-reject').forEach(btn => {
+                try { btn.removeAttribute('disabled'); btn.removeAttribute('aria-disabled'); } catch(e){}
+            });
+            document.querySelectorAll('.select-version').forEach(cb => {
+                try { cb.disabled = false; } catch(e){}
+            });
+            document.querySelectorAll('tr[data-version-id]').forEach(tr => {
+                if (!tr.classList.contains('iso-opened-row')) tr.classList.add('iso-opened-row');
+            });
+        }
+
+        // initialize helpers
+        function initAll() {
+            attachOpenHandlers();
+            attachApproveGuards();
+
+            // apply persisted flags
+            document.querySelectorAll('tr[data-version-id]').forEach(tr=>{
+                const v = tr.dataset.versionId;
+                try {
+                    if (localStorage.getItem('iso_opened_version_' + v)) enableRowForVersion(String(v));
+                } catch(e){}
+            });
+
+            // MVP: ensure buttons/checkboxes are usable immediately
+            forceEnableApprovalButtons();
+        }
+
+        try {
+            if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initAll);
+            else initAll();
+        } catch(e){
+            if (DEBUG) console.error('ISO approval helper init failed', e);
+        }
 
         // expose for debugging
-        window.__isoApprovalHelper = { enableRowForVersion, attachOpenHandlers, attachApproveGuards };
+        window.__isoApprovalHelper = { enableRowForVersion, attachOpenHandlers, attachApproveGuards, forceEnableApprovalButtons };
 
-      } catch(e){
-        console.error('ISO approval helper failed:', e);
-      }
     })();
-
 });
 </script>
 
