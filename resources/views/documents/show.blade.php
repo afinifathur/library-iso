@@ -11,12 +11,11 @@
 
     $user = auth()->user();
 
-    // Defensive: determine current version to display
+    // Resolve current version with several fallbacks
     $currentVersion = $version ?? ($document->currentVersion ?? null);
     if (! $currentVersion) {
         $currentVersion = $latestVersion ?? null;
     }
-    // fallback to first version from collection if available
     if (! $currentVersion && isset($document->versions) && $document->versions instanceof \Illuminate\Support\Collection) {
         $currentVersion = $document->versions->first() ?? null;
     }
@@ -92,7 +91,7 @@
     // versions collection fallback
     $versions = $versions ?? ($document->versions ?? collect());
 
-    // Build flags for master/pdf availability (best-effort disk checks)
+    // Build flags for master/pdf availability (defensive disk checks)
     $masterAvailable = false;
     $pdfAvailable = false;
     $pdfUrl = null;
@@ -109,22 +108,20 @@
             $currentVersion->pdf_path ?? null,
         ];
 
-        // check master existence on preferred disks
         foreach ($masterCandidates as $p) {
             if (empty($p)) continue;
             $p = ltrim($p, '/');
             try {
                 $disk = Storage::disk('documents');
-                if ($disk->exists($p)) { $masterAvailable = true; break; }
+                if (method_exists($disk, 'exists') && $disk->exists($p)) { $masterAvailable = true; break; }
             } catch (\Throwable $e) {
                 try {
                     $disk = Storage::disk('public');
-                    if ($disk->exists($p)) { $masterAvailable = true; break; }
+                    if (method_exists($disk, 'exists') && $disk->exists($p)) { $masterAvailable = true; break; }
                 } catch (\Throwable $_) { /* ignore */ }
             }
         }
 
-        // check pdf and build preview url if possible
         foreach ($pdfCandidates as $p) {
             if (empty($p)) continue;
             $p = ltrim($p, '/');
@@ -132,15 +129,14 @@
             if ($ext !== 'pdf') continue;
             // prefer preview route if defined
             if (Route::has('documents.versions.preview')) {
-                // preview route expects version id (controller ensures it serves pdf only)
-                $pdfUrl = Route::has('documents.versions.preview') ? route('documents.versions.preview', optional($currentVersion)->id) : null;
+                $pdfUrl = route('documents.versions.preview', optional($currentVersion)->id);
                 $pdfAvailable = true;
                 break;
             }
             // else try to build disk url (best-effort)
             try {
                 $disk = Storage::disk('documents');
-                if ($disk->exists($p) && method_exists($disk, 'url')) {
+                if (method_exists($disk, 'exists') && $disk->exists($p) && method_exists($disk, 'url')) {
                     $pdfUrl = $disk->url($p);
                     $pdfAvailable = true;
                     break;
@@ -148,7 +144,7 @@
             } catch (\Throwable $e) {
                 try {
                     $pub = Storage::disk('public');
-                    if ($pub->exists($p) && method_exists($pub, 'url')) {
+                    if (method_exists($pub, 'exists') && $pub->exists($p) && method_exists($pub, 'url')) {
                         $pdfUrl = $pub->url($p);
                         $pdfAvailable = true;
                         break;
@@ -158,14 +154,12 @@
         }
     }
 
-    // safe department list for modal (best-effort, but prefer controller to pass it)
+    // departments & categories fallbacks (prefer controller to pass)
     try {
-        $departments = \App\Models\Department::orderBy('code')->get();
+        $departments = $departments ?? (\App\Models\Department::orderBy('code')->get() ?? collect());
     } catch (\Throwable $e) {
         $departments = collect();
     }
-
-    // categories fallback (prefer controller to supply)
     try {
         $categories = $categories ?? (class_exists(\App\Models\Category::class) ? \App\Models\Category::orderBy('name')->get() : collect());
     } catch (\Throwable $e) {
@@ -578,6 +572,7 @@
       currentZoom = Math.max(0.5, Math.min(2.5, z));
       if (pdfIframe) {
         pdfIframe.style.transform = 'scale(' + currentZoom + ')';
+        // maintain visible height (avoid overflow by scaling container height)
         pdfIframe.style.height = (700 / currentZoom) + 'px';
       }
       if (pdfZoomPct) pdfZoomPct.textContent = Math.round(currentZoom * 100) + '%';

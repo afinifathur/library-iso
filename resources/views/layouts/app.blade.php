@@ -89,7 +89,11 @@
   <div class="app-container" style="min-height:100vh;">
 
     {{-- NAVBAR (hidden on login route) --}}
-    @if(!Request::is('login') && !Route::is('login'))
+    @php
+      $isLoginPath = Request::is('login') || Request::is('login/*') || (Route::currentRouteName() === 'login');
+    @endphp
+
+    @if(! $isLoginPath)
       <header class="site-header">
         {{-- Brand --}}
         <a href="{{ url('/') }}" class="brand" aria-label="Document Control — Management System">
@@ -102,101 +106,58 @@
 
         {{-- Navigation --}}
         <nav class="main-nav" role="navigation" aria-label="Main navigation">
-          <a href="{{ route('dashboard.index') }}" class="{{ request()->routeIs('dashboard.*') ? 'active' : '' }}">Dashboard</a>
-          <a href="{{ route('documents.index') }}" class="{{ request()->routeIs('documents.*') ? 'active' : '' }}">Documents</a>
-          <a href="{{ route('categories.index') }}" class="{{ request()->routeIs('categories.*') ? 'active' : '' }}">Categories</a>
-          <a href="{{ route('departments.index') }}" class="{{ request()->routeIs('departments.*') ? 'active' : '' }}">Departments</a>
+          @if(Route::has('dashboard.index'))
+            <a href="{{ route('dashboard.index') }}" class="{{ request()->routeIs('dashboard.*') ? 'active' : '' }}">Dashboard</a>
+          @endif
 
-          {{-- Audit Log — ONLY MR & DIRECTOR --}}
+          @if(Route::has('documents.index'))
+            <a href="{{ route('documents.index') }}" class="{{ request()->routeIs('documents.*') ? 'active' : '' }}">Documents</a>
+          @endif
+
+          @if(Route::has('categories.index'))
+            <a href="{{ route('categories.index') }}" class="{{ request()->routeIs('categories.*') ? 'active' : '' }}">Categories</a>
+          @endif
+
+          @if(Route::has('departments.index'))
+            <a href="{{ route('departments.index') }}" class="{{ request()->routeIs('departments.*') ? 'active' : '' }}">Departments</a>
+          @endif
+
+          {{-- Auth-related conditional links (safely computed) --}}
           @auth
             @php
               $u = auth()->user();
-              $showAudit = false;
-              if ($u) {
-                  if (method_exists($u, 'hasAnyRole')) {
-                      try { $showAudit = $u->hasAnyRole(['mr','director']); } catch (\Throwable $e) { $showAudit = false; }
+              $showAudit = false; $showDrafts = false; $showApproval = false; $showRecycle = false;
+              try {
+                  if ($u && method_exists($u, 'hasAnyRole')) {
+                      $showAudit = $u->hasAnyRole(['mr','director']);
+                      $showDrafts = $u->hasAnyRole(['kabag','admin','mr','director']);
+                      $showApproval = $u->hasAnyRole(['mr','director']);
+                      $showRecycle = $u->hasAnyRole(['mr','director','admin']);
                   } else {
-                      try {
-                          if (method_exists($u, 'roles')) {
-                              $roles = (array) optional($u->roles()->pluck('name'))->toArray();
-                              $showAudit = count(array_intersect($roles, ['mr','director'])) > 0;
-                          }
-                      } catch (\Throwable $e) { $showAudit = false; }
+                      if ($u && method_exists($u, 'roles')) {
+                          $roles = (array) optional($u->roles()->pluck('name'))->toArray();
+                          $showAudit = count(array_intersect($roles, ['mr','director'])) > 0;
+                          $showDrafts = count(array_intersect($roles, ['kabag','admin','mr','director'])) > 0;
+                          $showApproval = count(array_intersect($roles, ['mr','director'])) > 0;
+                          $showRecycle = count(array_intersect($roles, ['mr','director','admin'])) > 0;
+                      }
                   }
+              } catch (\Throwable $e) {
+                  $showAudit = $showDrafts = $showApproval = $showRecycle = false;
               }
             @endphp
 
             @if($showAudit && Route::has('audit.index'))
               <a href="{{ route('audit.index') }}" class="{{ request()->routeIs('audit.*') ? 'active' : '' }}">Audit Log</a>
             @endif
-          @endauth
-
-          {{-- Drafts --}}
-          @auth
-            @php
-              $u = auth()->user();
-              $showDrafts = false;
-              if ($u) {
-                  if (method_exists($u, 'hasAnyRole')) {
-                      try { $showDrafts = $u->hasAnyRole(['kabag','admin','mr','director']); } catch (\Throwable $e) { $showDrafts = false; }
-                  } else {
-                      try {
-                          if (method_exists($u, 'roles')) {
-                              $roles = (array) optional($u->roles()->pluck('name'))->toArray();
-                              $showDrafts = count(array_intersect($roles, ['kabag','admin','mr','director'])) > 0;
-                          }
-                      } catch (\Throwable $e) { $showDrafts = false; }
-                  }
-              }
-            @endphp
 
             @if($showDrafts && Route::has('drafts.index'))
               <a href="{{ route('drafts.index') }}" class="{{ request()->routeIs('drafts.*') ? 'active' : '' }}">Drafts</a>
             @endif
-          @endauth
-
-          {{-- Approval Queue --}}
-          @auth
-            @php
-              $u = auth()->user();
-              $showApproval = false;
-              if ($u) {
-                  if (method_exists($u, 'hasAnyRole')) {
-                      try { $showApproval = $u->hasAnyRole(['mr','director']); } catch (\Throwable $e) { $showApproval = false; }
-                  } else {
-                      try {
-                          if (method_exists($u, 'roles')) {
-                              $roles = (array) optional($u->roles()->pluck('name'))->toArray();
-                              $showApproval = count(array_intersect($roles, ['mr','director'])) > 0;
-                          }
-                      } catch (\Throwable $e) { $showApproval = false; }
-                  }
-              }
-            @endphp
 
             @if($showApproval && Route::has('approval.index'))
               <a href="{{ route('approval.index') }}" class="{{ request()->routeIs('approval.*') ? 'active' : '' }}">Approval Queue</a>
             @endif
-          @endauth
-
-          {{-- Recycle --}}
-          @auth
-            @php
-              $u = auth()->user();
-              $showRecycle = false;
-              if ($u) {
-                  if (method_exists($u, 'hasAnyRole')) {
-                      try { $showRecycle = $u->hasAnyRole(['mr','director','admin']); } catch (\Throwable $e) { $showRecycle = false; }
-                  } else {
-                      try {
-                          if (method_exists($u, 'roles')) {
-                              $roles = (array) optional($u->roles()->pluck('name'))->toArray();
-                              $showRecycle = count(array_intersect($roles, ['mr','director','admin'])) > 0;
-                          }
-                      } catch (\Throwable $e) { $showRecycle = false; }
-                  }
-              }
-            @endphp
 
             @if($showRecycle && Route::has('recycle.index'))
               <a href="{{ route('recycle.index') }}" class="{{ request()->routeIs('recycle.*') ? 'active' : '' }}" title="Recycle Bin" aria-label="Recycle Bin" style="display:inline-flex;align-items:center;gap:8px;">
@@ -250,8 +211,10 @@
     </main>
   </div>
 
-  {{-- Hidden logout form --}}
-  <form id="logout-form" action="{{ route('logout') }}" method="POST" style="display:none;">@csrf</form>
+  {{-- Hidden logout form (render only if route exists) --}}
+  @if(Route::has('logout'))
+    <form id="logout-form" action="{{ route('logout') }}" method="POST" style="display:none;">@csrf</form>
+  @endif
 
   {{-- allow pages to push scripts (backward-compatible) --}}
   @yield('scripts')
@@ -263,71 +226,75 @@
   {{-- Dropdown, SweetAlert flashes, and global approval helper --}}
   <script>
   (function () {
-    // --------- Dropdown menu (appended to body) ----------
+    // --------- Dropdown menu appended-to-body ----------
     document.addEventListener('DOMContentLoaded', function () {
       const dropdown = document.querySelector('.dropdown');
       if (dropdown) {
         const toggle = dropdown.querySelector('.dropdown-toggle');
+        if (toggle) {
+          const menu = document.createElement('div');
+          menu.className = 'dropdown-menu';
+          menu.style.display = 'none';
 
-        const menu = document.createElement('div');
-        menu.className = 'dropdown-menu';
-        menu.style.display = 'none';
+          // Profile link (if route exists on server it will be injected as JSON below)
+          @if(Route::has('profile.edit'))
+            const profileUrl = @json(route('profile.edit'));
+            const profileBtn = document.createElement('button');
+            profileBtn.type = 'button';
+            profileBtn.textContent = 'Profile';
+            profileBtn.addEventListener('click', function () { window.location = profileUrl; });
+            menu.appendChild(profileBtn);
+          @endif
 
-        // Profile link
-        @if(Route::has('profile.edit'))
-          const profileBtn = document.createElement('button');
-          profileBtn.type = 'button';
-          profileBtn.textContent = 'Profile';
-          profileBtn.addEventListener('click', function () { window.location = @json(route('profile.edit')); });
-          menu.appendChild(profileBtn);
-        @endif
+          // Logout (if logout route exists)
+          @if(Route::has('logout'))
+            const logoutBtn = document.createElement('button');
+            logoutBtn.type = 'button';
+            logoutBtn.textContent = 'Logout';
+            logoutBtn.addEventListener('click', function (e) {
+              e.preventDefault();
+              const logoutForm = document.getElementById('logout-form');
+              if (logoutForm) logoutForm.submit();
+            });
+            menu.appendChild(logoutBtn);
+          @endif
 
-        // Logout
-        const logoutBtn = document.createElement('button');
-        logoutBtn.type = 'button';
-        logoutBtn.textContent = 'Logout';
-        logoutBtn.addEventListener('click', function (e) {
-          e.preventDefault();
-          const logoutForm = document.getElementById('logout-form');
-          if (logoutForm) logoutForm.submit();
-        });
-        menu.appendChild(logoutBtn);
+          document.body.appendChild(menu);
 
-        document.body.appendChild(menu);
+          function positionMenu() {
+            const rect = toggle.getBoundingClientRect();
+            menu.style.left = Math.max(8, rect.right - menu.offsetWidth) + 'px';
+            menu.style.top = (rect.bottom + 8) + 'px';
 
-        function positionMenu() {
-          const rect = toggle.getBoundingClientRect();
-          menu.style.left = Math.max(8, rect.right - menu.offsetWidth) + 'px';
-          menu.style.top = (rect.bottom + 8) + 'px';
+            const maxRight = window.innerWidth - 8;
+            const menuRight = parseFloat(menu.style.left) + menu.offsetWidth;
+            if (menuRight > maxRight) menu.style.left = Math.max(8, maxRight - menu.offsetWidth) + 'px';
 
-          const maxRight = window.innerWidth - 8;
-          const menuRight = parseFloat(menu.style.left) + menu.offsetWidth;
-          if (menuRight > maxRight) menu.style.left = Math.max(8, maxRight - menu.offsetWidth) + 'px';
-
-          const menuBottom = rect.bottom + 8 + menu.offsetHeight;
-          if (menuBottom > window.innerHeight - 8) {
-            const above = rect.top - 8 - menu.offsetHeight;
-            if (above > 8) menu.style.top = above + 'px';
+            const menuBottom = rect.bottom + 8 + menu.offsetHeight;
+            if (menuBottom > window.innerHeight - 8) {
+              const above = rect.top - 8 - menu.offsetHeight;
+              if (above > 8) menu.style.top = above + 'px';
+            }
           }
+
+          toggle.addEventListener('click', function (e) {
+            e.stopPropagation();
+            if (menu.style.display === 'block') { menu.style.display = 'none'; }
+            else { positionMenu(); menu.style.display = 'block'; }
+          });
+
+          document.addEventListener('click', function (e) {
+            if (!menu.contains(e.target) && !toggle.contains(e.target)) menu.style.display = 'none';
+          });
+
+          document.addEventListener('keydown', function (e) { if (e.key === 'Escape') menu.style.display = 'none'; });
+
+          window.addEventListener('resize', function () { if (menu.style.display === 'block') positionMenu(); }, { passive: true });
+          window.addEventListener('scroll', function () { if (menu.style.display === 'block') positionMenu(); }, { passive: true });
         }
-
-        toggle.addEventListener('click', function (e) {
-          e.stopPropagation();
-          if (menu.style.display === 'block') { menu.style.display = 'none'; }
-          else { positionMenu(); menu.style.display = 'block'; }
-        });
-
-        document.addEventListener('click', function (e) {
-          if (!menu.contains(e.target) && !toggle.contains(e.target)) menu.style.display = 'none';
-        });
-
-        document.addEventListener('keydown', function (e) { if (e.key === 'Escape') menu.style.display = 'none'; });
-
-        window.addEventListener('resize', function () { if (menu.style.display === 'block') positionMenu(); }, { passive: true });
-        window.addEventListener('scroll', function () { if (menu.style.display === 'block') positionMenu(); }, { passive: true });
       }
 
-      // --------- SweetAlert flash messages ----------
+      // SweetAlert flash messages (toast / dialog)
       @if(session('success'))
         Swal.fire({ icon:'success', title:'Berhasil', text:@json(session('success')), toast:true, position:'top-end', showConfirmButton:false, timer:2500, timerProgressBar:true });
       @endif
@@ -335,16 +302,19 @@
         Swal.fire({ icon:'error', title:'Perhatian', text:@json(session('error')), confirmButtonText:'Tutup' });
       @endif
       @if(session('pending'))
-        Swal.fire({
-          icon:'warning', title:'Pending', text:@json(session('pending')), showCancelButton:true,
-          confirmButtonText:'Lihat Antrian', cancelButtonText:'Tutup'
-        }).then(result => { if (result.isConfirmed) window.location = @json(route('approval.index')); });
+        @if(Route::has('approval.index'))
+          Swal.fire({
+            icon:'warning', title:'Pending', text:@json(session('pending')), showCancelButton:true,
+            confirmButtonText:'Lihat Antrian', cancelButtonText:'Tutup'
+          }).then(result => { if (result.isConfirmed) window.location = @json(route('approval.index')); });
+        @else
+          Swal.fire({ icon:'warning', title:'Pending', text:@json(session('pending')), confirmButtonText:'Tutup' });
+        @endif
       @endif
     });
 
-    // --------- Global approval helper ----------
+    // --------- Global approval helper & version-open interactions ----------
     (function () {
-      // small helper to enable approve/reject on a row when an "Open" link is clicked
       function enableRowForVersion(vid) {
         if (!vid) return;
         document.querySelectorAll('tr[data-version-id="'+vid+'"]').forEach(tr => {
@@ -376,15 +346,16 @@
           }, { passive:true });
 
           // support middle-click
-          link.addEventListener('auxclick', function (ev) { if (ev.button === 1) {
-            const tr = this.closest('tr');
-            const vid = tr?.dataset?.versionId || this.dataset?.versionId;
-            if (vid) { try { localStorage.setItem('iso_opened_version_' + vid, '1'); } catch(e){}; enableRowForVersion(String(vid)); }
-          }}, { passive:true });
+          link.addEventListener('auxclick', function (ev) {
+            if (ev.button === 1) {
+              const tr = this.closest('tr');
+              const vid = tr?.dataset?.versionId || this.dataset?.versionId;
+              if (vid) { try { localStorage.setItem('iso_opened_version_' + vid, '1'); } catch(e){}; enableRowForVersion(String(vid)); }
+            }
+          }, { passive:true });
         });
       }
 
-      // Listen for postMessage from child tab
       window.addEventListener('message', function (ev) {
         try {
           const d = ev.data || {};
@@ -392,7 +363,6 @@
         } catch (e) {}
       });
 
-      // Listen for storage events
       window.addEventListener('storage', function (ev) {
         if (!ev.key) return;
         if (ev.key.startsWith('iso_opened_version_') && ev.newValue) {
@@ -401,7 +371,6 @@
         }
       });
 
-      // Guard approve forms: require localStorage flag
       function attachApproveGuards() {
         document.querySelectorAll('form.action-form-approve').forEach(form => {
           if (form.__isoGuard) return;
@@ -418,7 +387,6 @@
         });
       }
 
-      // Initialize
       function init() {
         attachOpenHandlers();
         attachApproveGuards();
@@ -433,10 +401,69 @@
       if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
       else init();
 
-      // expose minimal API for debugging
       window.__isoApprovalHelper = { enableRowForVersion, attachOpenHandlers, attachApproveGuards };
     })();
 
+  })();
+  </script>
+
+  {{-- Optional helper JS for dynamic version preview buttons.
+       This block will try to use server-generated route placeholders only if those routes exist.
+       It is safe to include even if your app doesn't use preview/download routes. --}}
+  <script>
+  (function () {
+    document.addEventListener('DOMContentLoaded', function () {
+      // prepare base URLs only if route exists (rendered server-side as ':id' placeholder)
+      var previewBase = "";
+      var downloadPdfBase = "";
+      var downloadMasterBase = "";
+
+      @if(Route::has('documents.versions.preview'))
+        previewBase = @json(route('documents.versions.preview', ':id'));
+      @endif
+      @if(Route::has('documents.versions.download'))
+        downloadPdfBase = @json(route('documents.versions.download', ':id'));
+      @endif
+      @if(Route::has('documents.versions.downloadMaster'))
+        downloadMasterBase = @json(route('documents.versions.downloadMaster', ':id'));
+      @endif
+
+      // When user clicks .action-open (in versions list), optionally update iframe + download links
+      document.querySelectorAll('.action-open').forEach(function(btn){
+        btn.addEventListener('click', function (ev) {
+          try {
+            var vid = this.dataset.versionId || this.getAttribute('data-version-id') || null;
+            if (!vid) return;
+            // update iframe if present
+            var iframe = document.getElementById('doc-iframe') || document.getElementById('pdfIframe');
+            if (iframe && previewBase) {
+              var newPreview = previewBase.replace(':id', vid);
+              if (iframe.src !== newPreview) iframe.src = newPreview;
+            }
+            // update download buttons if present
+            var btnPdf = document.getElementById('btn-download-pdf');
+            var btnMaster = document.getElementById('btn-download-master');
+            if (btnPdf && downloadPdfBase) {
+              btnPdf.href = downloadPdfBase.replace(':id', vid);
+              btnPdf.removeAttribute('aria-disabled');
+              btnPdf.title = '';
+            }
+            if (btnMaster && downloadMasterBase) {
+              btnMaster.href = downloadMasterBase.replace(':id', vid);
+              btnMaster.removeAttribute('aria-disabled');
+              btnMaster.title = '';
+            }
+
+            // visual highlight for versions rendered with .version-item
+            var item = this.closest('.version-item') || this.closest('tr');
+            if (item) {
+              document.querySelectorAll('.version-item, tr[data-version-id]').forEach(function(el){ el.style.background = ''; });
+              item.style.background = '#f7fff4';
+            }
+          } catch(e) { /* ignore safely */ }
+        }, { passive: true });
+      });
+    });
   })();
   </script>
 

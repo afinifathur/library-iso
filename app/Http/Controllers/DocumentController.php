@@ -14,25 +14,18 @@ use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Illuminate\Support\Facades\Schema;
 
-/**
- * DocumentController (versi bersih & defensif)
- */
 class DocumentController extends Controller
 {
     protected string $diskName = 'documents';
 
-    /* ==========================
+    /* -------------------------
      * LIST / FORM
-     * ========================== */
+     * ------------------------- */
 
     public function index(Request $request)
     {
         $departments = Department::orderBy('code')->get();
-
-        $categories = [];
-        if (class_exists(\App\Models\Category::class)) {
-            $categories = \App\Models\Category::orderBy('name')->get();
-        }
+        $categories = class_exists(\App\Models\Category::class) ? \App\Models\Category::orderBy('name')->get() : [];
 
         $docs = Document::with(['department', 'currentVersion'])
             ->when($request->filled('department'), fn($q) => $q->where('department_id', $request->input('department')))
@@ -66,9 +59,9 @@ class DocumentController extends Controller
         return view('documents.edit', compact('document', 'departments', 'categories'));
     }
 
-    /* ==========================
+    /* -------------------------
      * CREATE / REPLACE (store)
-     * ========================== */
+     * ------------------------- */
 
     public function store(Request $request)
     {
@@ -77,18 +70,15 @@ class DocumentController extends Controller
             return redirect()->route('login')->with('error', 'Login required.');
         }
 
-        // Normalize inputs
         $uploadType = strtolower(trim((string)($request->input('upload_type', $request->input('mode', 'new')))));
         $submitRaw = strtolower(trim((string)($request->input('submit_for', $request->input('submit', 'publish')))));
         $submit = in_array($submitRaw, ['save','draft'], true) ? 'draft' : 'publish';
         if ($uploadType === 'replace') $submit = 'draft';
 
-        // Branch: replace flow
         if ($uploadType === 'replace') {
             return $this->handleReplace($request, $user);
         }
 
-        // Branch: new document
         return $this->handleCreateNew($request, $user, $submit);
     }
 
@@ -98,6 +88,7 @@ class DocumentController extends Controller
             'doc_code'      => ['required','string','exists:documents,doc_code'],
             'version_label' => ['nullable','string','max:50'],
             'file'          => 'nullable|file|mimes:pdf,doc,docx|max:51200',
+            'master_file'   => 'nullable|file|mimes:doc,docx|max:102400',
             'pasted_text'   => 'nullable|string',
             'change_note'   => 'nullable|string|max:2000',
             'related_links' => 'nullable|string',
@@ -105,35 +96,46 @@ class DocumentController extends Controller
 
         $disk = $this->getDisk();
 
-        $file_path = null;
+        $pdf_path = null;
+        $master_path = null;
         $file_mime = null;
-        $checksum  = null;
+        $checksum = null;
 
+        // master_file (doc/docx)
+        if ($request->hasFile('master_file')) {
+            $master = $request->file('master_file');
+            $safe = $this->safeFilename($master->getClientOriginalName());
+            $name = now()->timestamp . '_master_' . Str::random(6) . '_' . $safe;
+            $folder = trim($validated['doc_code'], '/') . '/' . trim($validated['version_label'] ?? 'draft', '/');
+            $master_path = $folder . '/' . $name;
+            $disk->put($master_path, file_get_contents($master->getRealPath()));
+        }
+
+        // pdf (file)
         if ($request->hasFile('file')) {
             $file = $request->file('file');
-            $safeName = $this->safeFilename($file->getClientOriginalName());
-            $filename = now()->timestamp . '_' . $safeName;
-            $folder   = trim($validated['doc_code'], '/') . '/' . trim($validated['version_label'] ?? 'draft', '/');
-            $file_path = $folder . '/' . $filename;
-
+            $safe = $this->safeFilename($file->getClientOriginalName());
+            $name = now()->timestamp . '_pdf_' . Str::random(6) . '_' . $safe;
+            $folder = trim($validated['doc_code'], '/') . '/' . trim($validated['version_label'] ?? 'draft', '/');
+            $pdf_path = $folder . '/' . $name;
             $content = file_get_contents($file->getRealPath());
-            $disk->put($file_path, $content);
+            $disk->put($pdf_path, $content);
             $file_mime = $file->getClientMimeType() ?: 'application/octet-stream';
             $checksum = hash('sha256', $content);
         }
 
         $document = Document::where('doc_code', $validated['doc_code'])->firstOrFail();
 
-        // find existing draft/rejected to update else create
         $draft = DocumentVersion::where('document_id', $document->id)
             ->whereIn('status', ['draft','rejected'])
             ->latest('id')
             ->first();
 
         if ($draft) {
-            if ($file_path) $draft->file_path = $file_path;
+            if ($master_path) $draft->master_path = $master_path;
+            if ($pdf_path) $draft->pdf_path = $pdf_path;
             if ($file_mime) $draft->file_mime = $file_mime;
-            if ($checksum)  $draft->checksum  = $checksum;
+            if ($checksum) $draft->checksum = $checksum;
 
             $draft->version_label = $validated['version_label'] ?? ($draft->version_label ?? 'draft');
             $draft->change_note = $validated['change_note'] ?? $draft->change_note;
@@ -151,7 +153,8 @@ class DocumentController extends Controller
                 'status'        => 'draft',
                 'approval_stage'=> 'KABAG',
                 'created_by'    => $user->id,
-                'file_path'     => $file_path,
+                'master_path'   => $master_path,
+                'pdf_path'      => $pdf_path,
                 'file_mime'     => $file_mime,
                 'checksum'      => $checksum,
                 'change_note'   => $validated['change_note'] ?? null,
@@ -172,7 +175,6 @@ class DocumentController extends Controller
 
     protected function handleCreateNew(Request $request, $user, string $submit)
     {
-        // defensive: if user supplied doc_code that already exists
         if ($request->filled('doc_code')) {
             $exists = Document::where('doc_code', $request->input('doc_code'))->exists();
             if ($exists) {
@@ -188,6 +190,7 @@ class DocumentController extends Controller
             'category_id'   => $categoryRule,
             'department_id' => 'required|integer|exists:departments,id',
             'file'          => 'nullable|file|mimes:pdf,doc,docx|max:51200',
+            'master_file'   => 'nullable|file|mimes:doc,docx|max:102400',
             'pasted_text'   => 'nullable|string',
             'version_label' => 'nullable|string|max:50',
             'change_note'   => 'nullable|string|max:2000',
@@ -208,30 +211,41 @@ class DocumentController extends Controller
 
         $disk = $this->getDisk();
 
-        $file_path = null;
+        $pdf_path = null;
+        $master_path = null;
         $file_mime = null;
-        $checksum  = null;
+        $checksum = null;
+
+        $versionLabel = $validated['version_label'] ?? 'v1';
+        $folder = $document->doc_code . '/' . $versionLabel;
+
+        if ($request->hasFile('master_file')) {
+            $master = $request->file('master_file');
+            $safe = $this->safeFilename($master->getClientOriginalName());
+            $master_name = now()->timestamp . '_master_' . Str::random(6) . '_' . $safe;
+            $master_path = $folder . '/' . $master_name;
+            $disk->put($master_path, file_get_contents($master->getRealPath()));
+        }
 
         if ($request->hasFile('file')) {
             $file = $request->file('file');
-            $safeName = $this->safeFilename($file->getClientOriginalName());
-            $filename = now()->timestamp . '_' . $safeName;
-            $folder   = $document->doc_code . '/v1';
-            $file_path = $folder . '/' . $filename;
-
+            $safe = $this->safeFilename($file->getClientOriginalName());
+            $name = now()->timestamp . '_pdf_' . Str::random(6) . '_' . $safe;
+            $pdf_path = $folder . '/' . $name;
             $content = file_get_contents($file->getRealPath());
-            $disk->put($file_path, $content);
+            $disk->put($pdf_path, $content);
             $file_mime = $file->getClientMimeType() ?: 'application/octet-stream';
-            $checksum  = hash('sha256', $content);
+            $checksum = hash('sha256', $content);
         }
 
         if ($submit === 'publish') {
             $version = DocumentVersion::create([
                 'document_id'   => $document->id,
-                'version_label' => $validated['version_label'] ?? 'v1',
+                'version_label' => $versionLabel,
                 'status'        => 'approved',
                 'approval_stage'=> 'DONE',
-                'file_path'     => $file_path,
+                'master_path'   => $master_path,
+                'pdf_path'      => $pdf_path,
                 'file_mime'     => $file_mime,
                 'checksum'      => $checksum,
                 'change_note'   => $validated['change_note'] ?? null,
@@ -252,13 +266,13 @@ class DocumentController extends Controller
             return redirect()->route('documents.show', $document->id)->with('success', 'Baseline uploaded and published.');
         }
 
-        // save as draft
         $version = DocumentVersion::create([
             'document_id'   => $document->id,
-            'version_label' => $validated['version_label'] ?? 'v1',
+            'version_label' => $versionLabel,
             'status'        => 'draft',
             'approval_stage'=> 'KABAG',
-            'file_path'     => $file_path,
+            'master_path'   => $master_path,
+            'pdf_path'      => $pdf_path,
             'file_mime'     => $file_mime,
             'checksum'      => $checksum,
             'change_note'   => $validated['change_note'] ?? null,
@@ -271,9 +285,9 @@ class DocumentController extends Controller
         return redirect()->route('drafts.index')->with('success', 'Baseline created as draft.');
     }
 
-    /* ==========================
-     * UPDATE COMBINED (metadata + version)
-     * ========================== */
+    /* -------------------------
+     * UPDATE COMBINED
+     * ------------------------- */
 
     public function updateCombined(Request $request, Document $document)
     {
@@ -284,7 +298,8 @@ class DocumentController extends Controller
             'category_id'   => 'nullable|integer|exists:categories,id',
             'version_id'    => 'nullable|integer|exists:document_versions,id',
             'version_label' => 'required|string|max:50',
-            'file'          => 'nullable|file|mimes:pdf,doc,docx|max:51200',
+            'file'          => 'nullable|file|mimes:pdf|max:51200',
+            'master_file'   => 'nullable|file|mimes:doc,docx|max:102400',
             'pasted_text'   => 'nullable|string|max:800000',
             'change_note'   => 'nullable|string|max:2000',
             'signed_by'     => 'nullable|string|max:191',
@@ -296,7 +311,6 @@ class DocumentController extends Controller
         $rawSubmit = strtolower(trim((string)($validated['submit_for'] ?? $request->input('submit_for', ''))));
         $submitFor = in_array($rawSubmit, ['publish','submit'], true) ? 'submit' : 'save';
 
-        // metadata update
         $document->update([
             'doc_code'      => $validated['doc_code'],
             'title'         => $validated['title'],
@@ -312,7 +326,6 @@ class DocumentController extends Controller
         $user = $request->user();
         $disk = $this->getDisk();
 
-        // find version to update or create new draft for this user
         $version = null;
         if (!empty($validated['version_id'])) {
             $version = DocumentVersion::where('document_id', $document->id)->where('id', $validated['version_id'])->first();
@@ -341,31 +354,41 @@ class DocumentController extends Controller
             $version->approval_stage = 'KABAG';
         }
 
-        // maintain existing file if present
-        $file_path = $version->file_path ?? null;
+        // keep existing paths
+        $master_path = $version->master_path ?? null;
+        $pdf_path = $version->pdf_path ?? null;
         $file_mime = $version->file_mime ?? null;
         $checksum  = $version->checksum ?? null;
 
+        $versionLabel = $validated['version_label'];
+        $folder = $document->doc_code . '/' . $versionLabel;
+
+        if ($request->hasFile('master_file')) {
+            $master = $request->file('master_file');
+            $safe = $this->safeFilename($master->getClientOriginalName());
+            $name = now()->timestamp . '_master_' . Str::random(6) . '_' . $safe;
+            $master_path = $folder . '/' . $name;
+            $disk->put($master_path, file_get_contents($master->getRealPath()));
+        }
+
         if ($request->hasFile('file')) {
-            // delete old file (ignore errors)
-            if ($file_path && $disk->exists($file_path)) {
-                try { $disk->delete($file_path); } catch (\Throwable) { /* ignore */ }
+            if ($pdf_path && $disk->exists($pdf_path)) {
+                try { /* do not delete approved historic files; only delete user-draft replacement if created_by same user */ } catch (\Throwable) {}
             }
 
             $file = $request->file('file');
-            $safeName = $this->safeFilename($file->getClientOriginalName());
-            $filename = now()->timestamp . '_' . Str::random(6) . '_' . $safeName;
-            $folder   = $document->doc_code . '/' . $validated['version_label'];
-            $file_path = $folder . '/' . $filename;
-
+            $safe = $this->safeFilename($file->getClientOriginalName());
+            $name = now()->timestamp . '_pdf_' . Str::random(6) . '_' . $safe;
+            $pdf_path = $folder . '/' . $name;
             $content = file_get_contents($file->getRealPath());
-            $disk->put($file_path, $content);
+            $disk->put($pdf_path, $content);
             $file_mime = $file->getClientMimeType() ?: 'application/octet-stream';
             $checksum = hash('sha256', $content);
         }
 
-        $version->version_label = $validated['version_label'];
-        $version->file_path     = $file_path;
+        $version->version_label = $versionLabel;
+        $version->master_path   = $master_path;
+        $version->pdf_path      = $pdf_path;
         $version->file_mime     = $file_mime;
         $version->checksum      = $checksum;
         $version->change_note   = $validated['change_note'] ?? $version->change_note;
@@ -399,9 +422,9 @@ class DocumentController extends Controller
         return redirect()->route('documents.show', $document->id)->with('success', 'Draft saved.');
     }
 
-    /* ==========================
+    /* -------------------------
      * UPLOAD PDF (separate flow)
-     * ========================== */
+     * ------------------------- */
 
     public function uploadPdf(Request $request)
     {
@@ -424,7 +447,6 @@ class DocumentController extends Controller
             'related_links'  => 'nullable|string',
         ]);
 
-        // Find or create document
         if (!empty($validated['document_id'])) {
             $document = Document::findOrFail((int) $validated['document_id']);
         } else {
@@ -442,25 +464,23 @@ class DocumentController extends Controller
 
         $disk = $this->getDisk();
 
-        // master
         $master_path = null;
         if ($request->hasFile('master_file')) {
             $master = $request->file('master_file');
             $safeName = $this->safeFilename($master->getClientOriginalName());
             $master_name = now()->timestamp . '_master_' . Str::random(6) . '_' . $safeName;
-            $master_path = $document->doc_code . '/master/' . $master_name;
+            $master_path = $document->doc_code . '/' . $validated['version_label'] . '/' . $master_name;
             $disk->put($master_path, file_get_contents($master->getRealPath()));
         }
 
-        // pdf
-        $file_path = null; $file_mime = null; $checksum = null;
+        $pdf_path = null; $file_mime = null; $checksum = null;
         if ($request->hasFile('file')) {
             $file = $request->file('file');
             $safeName = $this->safeFilename($file->getClientOriginalName());
-            $filename = now()->timestamp . '_' . Str::random(6) . '_' . $safeName;
-            $file_path = $document->doc_code . '/' . $validated['version_label'] . '/' . $filename;
+            $filename = now()->timestamp . '_pdf_' . Str::random(6) . '_' . $safeName;
+            $pdf_path = $document->doc_code . '/' . $validated['version_label'] . '/' . $filename;
             $content = file_get_contents($file->getRealPath());
-            $disk->put($file_path, $content);
+            $disk->put($pdf_path, $content);
             $file_mime = $file->getClientMimeType() ?: 'application/pdf';
             $checksum = hash('sha256', $content);
         }
@@ -477,7 +497,8 @@ class DocumentController extends Controller
             'status'        => 'draft',
             'approval_stage'=> 'KABAG',
             'created_by'    => $user->id,
-            'file_path'     => $file_path,
+            'master_path'   => $master_path,
+            'pdf_path'      => $pdf_path,
             'file_mime'     => $file_mime,
             'checksum'      => $checksum,
             'change_note'   => $validated['change_note'] ?? null,
@@ -485,7 +506,6 @@ class DocumentController extends Controller
             'signed_at'     => !empty($validated['signed_at']) ? Carbon::parse($validated['signed_at']) : null,
         ]);
 
-        // prefer pasted text
         if ($request->filled('pasted_text')) {
             $pasted = $this->normalizeText($request->input('pasted_text'));
             $version->pasted_text = $pasted;
@@ -493,13 +513,12 @@ class DocumentController extends Controller
             $version->summary_changed = 'Text provided by uploader (pasted).';
             $version->save();
         } else {
-            // try extract from master (docx) or pdf (external extractor)
             $extracted = null;
             if ($master_path && $disk->exists($master_path) && Str::endsWith(strtolower($master_path), '.docx')) {
                 $binary = $disk->get($master_path);
                 $extracted = $this->extractDocxText($binary);
             }
-            if (!$extracted && $version->file_path && $disk->exists($version->file_path)) {
+            if (!$extracted && $version->pdf_path && $disk->exists($version->pdf_path)) {
                 $extracted = $this->extractPdfText($version);
             }
             if ($extracted) {
@@ -511,23 +530,22 @@ class DocumentController extends Controller
             $version->save();
         }
 
-        // IMPORTANT: do NOT touch current_version_id/revision_number/revision_date for drafts/uploads.
-        // Only update non-version metadata like title/department if uploader intended it.
+        // do NOT alter current_version_id here; only metadata (title/department)
         $document->title = $validated['title'];
         $document->department_id = (int)$validated['department_id'];
         $document->save();
 
         $this->maybeAudit('upload_version', $user->id, $document->id, $version->id, $request->ip(), [
-            'file' => $file_path, 'master' => $master_path, 'pasted' => $request->filled('pasted_text')
+            'pdf' => $pdf_path, 'master' => $master_path, 'pasted' => $request->filled('pasted_text')
         ]);
 
         return redirect()->route('documents.show', $document->id)
             ->with('success', 'Version uploaded. Text indexing: ' . ($version->plain_text ? 'available' : 'not available') . '.');
     }
 
-    /* ==========================
+    /* -------------------------
      * COMPARE / SHOW / APPROVAL / REJECT / TRASH
-     * ========================== */
+     * ------------------------- */
 
     public function compare(Request $request, $documentId)
     {
@@ -579,7 +597,6 @@ class DocumentController extends Controller
         $user = $request->user();
         if (! $user) abort(403);
 
-        // MR forwards to DIRECTOR
         if (method_exists($user, 'hasAnyRole') && $user->hasAnyRole(['mr'])) {
             $version->update([
                 'status' => 'submitted',
@@ -590,7 +607,6 @@ class DocumentController extends Controller
             return back()->with('success','Version forwarded to Director.');
         }
 
-        // Director/Admin final approval
         if (method_exists($user, 'hasAnyRole') && $user->hasAnyRole(['director','admin'])) {
             DB::transaction(function () use ($version, $user) {
                 $update = ['status' => 'approved', 'approval_stage' => 'DONE'];
@@ -629,7 +645,6 @@ class DocumentController extends Controller
         if ($this->hasColumn($version, 'reject_reason')) $update['reject_reason'] = $request->input('rejected_reason');
 
         $version->update($update);
-
         $this->maybeAudit('reject_version', $user->id, $version->document_id, $version->id, $request->ip(), ['reason'=>$request->input('rejected_reason')]);
 
         return back()->with('success','Version rejected and returned to draft.');
@@ -649,47 +664,37 @@ class DocumentController extends Controller
         return back()->with('success','Version moved to Recycle Bin.');
     }
 
-    /* ==========================
+    /* -------------------------
      * SHOW / DOWNLOAD / PREVIEW
-     * ========================== */
+     * ------------------------- */
 
     public function show(Document $document)
     {
         $document->load(['department', 'versions.creator']);
 
-        // prefer version specified via query string (explicit)
         $requestedVersionId = null;
-        try {
-            $requestedVersionId = request()->query('version_id') ? (int) request()->query('version_id') : null;
-        } catch (\Throwable) {
-            $requestedVersionId = null;
-        }
+        try { $requestedVersionId = request()->query('version_id') ? (int) request()->query('version_id') : null; } catch (\Throwable) { $requestedVersionId = null; }
 
         $version = null;
 
-        // 1) if explicit version requested, use it (if it belongs to document)
         if ($requestedVersionId) {
             $version = $document->versions()->where('id', $requestedVersionId)->first();
         }
 
-        // 2) else prefer the document's currentVersion (promoted / approved)
         if (! $version && isset($document->current_version_id) && $document->current_version_id) {
             $version = $document->versions()->where('id', $document->current_version_id)->first();
         }
 
-        // 3) else use the most recent approved version
         if (! $version) {
             $version = $document->versions()->where('status', 'approved')->orderByDesc('id')->first();
         }
 
-        // 4) fallback: any version (draft/rejected) — but mark as draft view
         if (! $version) {
             $version = $document->versions()->orderByDesc('id')->first();
         }
 
         $versions = $document->versions->sortByDesc('id')->values();
 
-        // relatedLinks normalization (safe)
         $relatedLinks = [];
         $rawLinks = $document->related_links ?? null;
         if ($rawLinks !== null) {
@@ -716,7 +721,6 @@ class DocumentController extends Controller
             }
         }
 
-        // defensive signature placeholders
         if ($version && (! property_exists($version,'signature') || $version->signature === null)) {
             $version->signature = (object)['signed_at'=>null,'signed_by'=>null];
         }
@@ -730,46 +734,48 @@ class DocumentController extends Controller
     public function downloadVersion(DocumentVersion $version)
     {
         $disk = $this->getDisk();
-        if (! $version->file_path || ! $disk->exists($version->file_path)) abort(404);
-        // use disk->download if supported
-        try {
-            return $disk->download($version->file_path, basename($version->file_path));
-        } catch (\Throwable $e) {
-            $stream = $disk->readStream($version->file_path);
-            if ($stream === false) abort(500);
-            $size = $this->safeDiskCall(fn() => $disk->size($version->file_path));
-            $mime = $this->safeDiskCall(fn() => $disk->mimeType($version->file_path));
-            return response()->stream(function() use ($stream) {
-                fpassthru($stream);
-                if (is_resource($stream)) fclose($stream);
-            }, 200, array_filter([
-                'Content-Type' => $mime ?: 'application/octet-stream',
-                'Content-Length' => $size,
-                'Content-Disposition' => 'attachment; filename="'.basename($version->file_path).'"',
-            ]));
+
+        // prefer pdf_path, then file_path/master_path as fallback
+        $candidates = [$version->pdf_path ?? null, $version->file_path ?? null, $version->master_path ?? null];
+
+        foreach ($candidates as $p) {
+            if (empty($p)) continue;
+            $path = ltrim($p, '/');
+            if (! $disk->exists($path)) continue;
+
+            try {
+                return $disk->download($path, basename($path));
+            } catch (\Throwable $e) {
+                $stream = $disk->readStream($path);
+                if ($stream === false) continue;
+                $size = $this->safeDiskCall(fn() => $disk->size($path));
+                $mime = $this->safeDiskCall(fn() => $disk->mimeType($path));
+                return response()->stream(function() use ($stream) {
+                    fpassthru($stream);
+                    if (is_resource($stream)) fclose($stream);
+                }, 200, array_filter([
+                    'Content-Type' => $mime ?: 'application/octet-stream',
+                    'Content-Length' => $size,
+                    'Content-Disposition' => 'attachment; filename="'.basename($path).'"',
+                ]));
+            }
         }
+
+        abort(404);
     }
 
     public function downloadMaster(DocumentVersion $version)
     {
         $user = request()->user();
-        if (! $user) {
-            abort(403, 'Login required.');
-        }
+        if (! $user) abort(403, 'Login required.');
 
-        if (method_exists($this, 'getAvailableDisks')) {
-            $disks = $this->getAvailableDisks();
-        } else {
-            $disks = [];
-            try { $disks[] = Storage::disk('documents'); } catch (\Throwable) {}
-            try { $disks[] = Storage::disk('public'); } catch (\Throwable) {}
-        }
+        $disks = $this->getAvailableDisks();
 
+        // prefer version.master_path -> version.pdf_path (if no master but want to force docx?) -> version.file_path
         $candidates = [
             $version->master_path ?? null,
-            $version->document?->master_path ?? null,
             $version->file_path ?? null,
-            $version->document?->file_path ?? null,
+            $version->pdf_path ?? null,
         ];
 
         foreach ($disks as $disk) {
@@ -777,10 +783,7 @@ class DocumentController extends Controller
                 if (empty($p)) continue;
                 $path = ltrim($p, '/');
 
-                $exists = (method_exists($this, 'safeDiskCall'))
-                    ? $this->safeDiskCall(fn() => $disk->exists($path))
-                    : (function() use ($disk, $path) { try { return $disk->exists($path); } catch (\Throwable) { return false; } })();
-
+                $exists = (method_exists($this, 'safeDiskCall')) ? $this->safeDiskCall(fn() => $disk->exists($path)) : (function() use ($disk,$path){ try{ return $disk->exists($path); }catch(\Throwable){return false;} })();
                 if (! $exists) continue;
 
                 if (method_exists($this, 'maybeAudit')) {
@@ -790,27 +793,13 @@ class DocumentController extends Controller
                 try {
                     return $disk->download($path, basename($path));
                 } catch (\Throwable $e) {
-                    $stream = (method_exists($this, 'safeDiskCall'))
-                        ? $this->safeDiskCall(fn() => $disk->readStream($path))
-                        : (function() use ($disk, $path) { try { return $disk->readStream($path); } catch (\Throwable) { return false; } })();
-
-                    if ($stream === false || $stream === null) {
-                        continue;
-                    }
-
-                    $size = (method_exists($this, 'safeDiskCall'))
-                        ? $this->safeDiskCall(fn() => $disk->size($path))
-                        : (function() use ($disk, $path) { try { return $disk->size($path); } catch (\Throwable) { return null; } })();
-
-                    $mime = (method_exists($this, 'safeDiskCall'))
-                        ? $this->safeDiskCall(fn() => $disk->mimeType($path))
-                        : (function() use ($disk, $path) { try { return $disk->mimeType($path); } catch (\Throwable) { return null; } })();
-
+                    $stream = (method_exists($this, 'safeDiskCall')) ? $this->safeDiskCall(fn() => $disk->readStream($path)) : (function() use ($disk,$path){ try{ return $disk->readStream($path);}catch(\Throwable){return false;} })();
+                    if ($stream === false || $stream === null) continue;
+                    $size = (method_exists($this, 'safeDiskCall')) ? $this->safeDiskCall(fn() => $disk->size($path)) : null;
+                    $mime = (method_exists($this, 'safeDiskCall')) ? $this->safeDiskCall(fn() => $disk->mimeType($path)) : null;
                     return response()->stream(function () use ($stream) {
                         @fpassthru($stream);
-                        if (is_resource($stream)) {
-                            @fclose($stream);
-                        }
+                        if (is_resource($stream)) @fclose($stream);
                     }, 200, array_filter([
                         'Content-Type' => $mime ?: 'application/octet-stream',
                         'Content-Length' => $size,
@@ -827,53 +816,28 @@ class DocumentController extends Controller
     public function previewVersion(DocumentVersion $version)
     {
         $user = request()->user();
-        if (! $user) {
-            abort(403, 'Login required.');
-        }
+        if (! $user) abort(403, 'Login required.');
 
-        if (method_exists($this, 'getAvailableDisks')) {
-            $disks = $this->getAvailableDisks();
-        } else {
-            $disks = [];
-            try { $disks[] = Storage::disk('documents'); } catch (\Throwable) {}
-            try { $disks[] = Storage::disk('public'); } catch (\Throwable) {}
-        }
+        $disks = $this->getAvailableDisks();
 
-        $candidates = [
-            $version->file_path ?? null,
-            $version->pdf_path ?? null,
-            $version->master_path ?? null,
-        ];
+        // prefer pdf_path then file_path then master_path (only pdf inline)
+        $candidates = [$version->pdf_path ?? null, $version->file_path ?? null, $version->master_path ?? null];
 
         foreach ($disks as $disk) {
             foreach ($candidates as $p) {
                 if (empty($p)) continue;
                 $path = ltrim($p, '/');
 
-                $exists = (method_exists($this, 'safeDiskCall'))
-                    ? $this->safeDiskCall(fn() => $disk->exists($path))
-                    : (function() use ($disk, $path) { try { return $disk->exists($path); } catch (\Throwable) { return false; } })();
-
+                $exists = (method_exists($this, 'safeDiskCall')) ? $this->safeDiskCall(fn() => $disk->exists($path)) : (function() use ($disk,$path){ try{ return $disk->exists($path);}catch(\Throwable){return false;} })();
                 if (! $exists) continue;
 
-                $mime = (method_exists($this, 'safeDiskCall'))
-                    ? $this->safeDiskCall(fn() => $disk->mimeType($path))
-                    : (function() use ($disk, $path) { try { return $disk->mimeType($path); } catch (\Throwable) { return null; } })();
-
+                $mime = (method_exists($this, 'safeDiskCall')) ? $this->safeDiskCall(fn() => $disk->mimeType($path)) : null;
                 $ext  = strtolower(pathinfo($path, PATHINFO_EXTENSION));
 
                 if ($mime === 'application/pdf' || $ext === 'pdf') {
-                    $stream = (method_exists($this, 'safeDiskCall'))
-                        ? $this->safeDiskCall(fn() => $disk->readStream($path))
-                        : (function() use ($disk, $path) { try { return $disk->readStream($path); } catch (\Throwable) { return false; } })();
-
-                    if ($stream === false || $stream === null) {
-                        continue;
-                    }
-
-                    $size = (method_exists($this, 'safeDiskCall'))
-                        ? $this->safeDiskCall(fn() => $disk->size($path))
-                        : (function() use ($disk, $path) { try { return $disk->size($path); } catch (\Throwable) { return null; } })();
+                    $stream = (method_exists($this, 'safeDiskCall')) ? $this->safeDiskCall(fn() => $disk->readStream($path)) : (function() use ($disk,$path){ try{ return $disk->readStream($path);}catch(\Throwable){return false;} })();
+                    if ($stream === false || $stream === null) continue;
+                    $size = (method_exists($this, 'safeDiskCall')) ? $this->safeDiskCall(fn() => $disk->size($path)) : null;
 
                     if (method_exists($this, 'maybeAudit')) {
                         $this->maybeAudit('preview_pdf', $user->id ?? null, $version->document_id ?? null, $version->id, request()->ip(), ['path' => $path]);
@@ -881,9 +845,7 @@ class DocumentController extends Controller
 
                     return response()->stream(function () use ($stream) {
                         @fpassthru($stream);
-                        if (is_resource($stream)) {
-                            @fclose($stream);
-                        }
+                        if (is_resource($stream)) @fclose($stream);
                     }, 200, array_filter([
                         'Content-Type' => 'application/pdf',
                         'Content-Length' => $size,
@@ -897,17 +859,13 @@ class DocumentController extends Controller
         abort(404, 'PDF preview not available for this version.');
     }
 
-    /* ==========================
+    /* -------------------------
      * HELPERS
-     * ========================== */
+     * ------------------------- */
 
     protected function getDisk()
     {
-        try {
-            return Storage::disk($this->diskName);
-        } catch (\Throwable $e) {
-            return Storage::disk('public');
-        }
+        try { return Storage::disk($this->diskName); } catch (\Throwable $e) { return Storage::disk('public'); }
     }
 
     protected function getAvailableDisks(): array
@@ -953,9 +911,7 @@ class DocumentController extends Controller
                 'detail' => json_encode($detail),
                 'ip' => $ip,
             ]);
-        } catch (\Throwable) {
-            // ignore audit failures
-        }
+        } catch (\Throwable) { /* ignore */ }
     }
 
     protected function userCanUpload($user): bool
@@ -1026,7 +982,7 @@ class DocumentController extends Controller
     protected function normalizeText(string $text): string
     {
         $text = str_replace(["\r\n","\r"], "\n", $text);
-        $text = preg_replace('/[^\PC\n\t]/u', ' ', $text); // control chars
+        $text = preg_replace('/[^\PC\n\t]/u', ' ', $text);
         $text = preg_replace('/[ \t]{2,}/', ' ', $text);
         $text = preg_replace("/\n{3,}/", "\n\n", $text);
         return trim($text);
