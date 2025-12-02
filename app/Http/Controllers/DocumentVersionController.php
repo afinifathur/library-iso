@@ -14,355 +14,355 @@ use Illuminate\Support\Facades\Schema;
 
 class DocumentVersionController extends Controller
 {
-    /**
-     * Tampilkan form create (opsional ?document_id=)
-     */
+    protected string $diskName = 'documents';
+
+    /* ------------------------
+     * Form: create
+     * ------------------------ */
     public function create(Request $request)
     {
         $document = null;
-
         if ($request->filled('document_id')) {
             $document = Document::find($request->query('document_id'));
         }
-
         return view('versions.create', compact('document'));
     }
 
-    /**
-     * Simpan versi baru
-     */
+    /* ------------------------
+     * Store new version (draft or publish if explicitly requested)
+     * ------------------------ */
     public function store(Request $request)
     {
         $request->validate([
-            'document_id'   => ['required', 'integer', 'exists:documents,id'],
-            'version_label' => ['required', 'string', 'max:50'],
-
-            // wajib salah satu: file atau pasted_text
-            'file'        => ['required_without:pasted_text', 'nullable', 'file', 'mimes:pdf,doc,docx', 'max:51200'],
-            'pasted_text' => ['required_without:file', 'nullable', 'string', 'max:500000'],
-
-            'change_note' => ['nullable', 'string', 'max:2000'],
-            'signed_by'   => ['nullable', 'string', 'max:191'],
-            'signed_at'   => ['nullable', 'date'],
+            'document_id'   => ['required','integer','exists:documents,id'],
+            'version_label' => ['nullable','string','max:50'],
+            'file'          => ['required_without:pasted_text','nullable','file','mimes:pdf','max:51200'],
+            'master_file'   => ['nullable','file','mimes:doc,docx','max:102400'],
+            'pasted_text'   => ['nullable','string','max:500000'],
+            'action'        => ['nullable','in:draft,submit,publish'], // optional hint
+            'change_note'   => ['nullable','string','max:2000'],
+            'signed_by'     => ['nullable','string','max:191'],
+            'signed_at'     => ['nullable','date'],
         ]);
 
         $document = Document::findOrFail($request->input('document_id'));
-        $userId   = optional($request->user())->id;
+        $user = $request->user();
+        $disk = $this->getDisk();
 
-        $filePath = null;
-        $fileMime = null;
+        // determine version label: auto-increment vN
+        $preferred = $request->input('version_label') ? trim($request->input('version_label')) : null;
+        $versionLabel = $this->normalizeVersionLabel($document, $preferred);
+
+        // build folder: DOC_CODE/vN
+        $docCode = $document->doc_code ?: ('doc_'.$document->id);
+        $folder = trim($docCode . '/' . $versionLabel, '/');
+
+        $pdf_path = null;
+        $file_mime = null;
         $checksum = null;
+        $master_path = null;
 
-        // gunakan disk 'documents' untuk konsistensi
-        $disk = Storage::disk('documents');
+        // save master (doc/docx) under {DOC_CODE}/{vN}/master/
+        if ($request->hasFile('master_file')) {
+            $master = $request->file('master_file');
+            $safe = $this->safeFilename($master->getClientOriginalName());
+            $masterName = now()->timestamp . '_master_' . Str::random(6) . '_' . $safe;
+            $master_path = trim($folder . '/master/' . $masterName, '/');
+            try { $disk->put($master_path, file_get_contents($master->getRealPath())); } catch (\Throwable) { $master_path = null; }
+        }
 
+        // save pdf under version folder
         if ($request->hasFile('file')) {
-            $file   = $request->file('file');
-            $folder = ($document->doc_code ?: 'misc') . '/' . now()->format('Ymd');
-
-            $original = pathinfo($file->getClientOriginalName(), PATHINFO_FILENAME);
-            $ext      = $file->getClientOriginalExtension();
-            $safeName = $this->safeFilename($original) . ($ext ? ".{$ext}" : '');
-            $safeName = now()->timestamp . '_' . Str::random(6) . '_' . $safeName;
-
-            // simpan file di disk 'documents'
-            $filePath = trim($folder . '/' . $safeName, '/');
-            $disk->put($filePath, file_get_contents($file->getRealPath()));
-
-            $fileMime = $file->getClientMimeType() ?: 'application/octet-stream';
-            $checksum = hash_file('sha256', $file->getRealPath());
+            $file = $request->file('file');
+            $safe = $this->safeFilename($file->getClientOriginalName());
+            $fileName = now()->timestamp . '_pdf_' . Str::random(6) . '_' . $safe;
+            $pdf_path = trim($folder . '/' . $fileName, '/');
+            try {
+                $content = file_get_contents($file->getRealPath());
+                $disk->put($pdf_path, $content);
+                $file_mime = $file->getClientMimeType() ?: 'application/pdf';
+                $checksum = hash('sha256', $content);
+            } catch (\Throwable) {
+                $pdf_path = null;
+                $file_mime = null;
+                $checksum = null;
+            }
         }
 
-        $version = new DocumentVersion();
-        $version->document_id    = $document->id;
-        $version->version_label  = (string) $request->string('version_label');
-        $version->status         = 'draft';
-        $version->approval_stage = 'KABAG'; // default initial stage
-        $version->created_by     = $userId;
+        // remove any previous draft by same user for same document (avoid dup)
+        DocumentVersion::where('document_id', $document->id)
+            ->where('created_by', $user->id)
+            ->whereIn('status', ['draft','rejected'])
+            ->delete();
 
-        $version->file_path = $filePath;
-        $version->file_mime = $fileMime;
-        $version->checksum  = $checksum;
+        // create version record (default draft)
+        $version = DocumentVersion::create([
+            'document_id'   => $document->id,
+            'version_label' => $versionLabel,
+            'status'        => 'draft',
+            'approval_stage'=> 'KABAG',
+            'created_by'    => $user->id ?? null,
+            'file_path'     => $pdf_path,    // keep file_path for backward compatibility
+            'pdf_path'      => $pdf_path,
+            'master_path'   => $master_path,
+            'file_mime'     => $file_mime,
+            'checksum'      => $checksum,
+            'change_note'   => $request->input('change_note') ?? null,
+            'plain_text'    => $request->input('pasted_text') ? trim($request->input('pasted_text')) : null,
+            'pasted_text'   => $request->input('pasted_text') ? trim($request->input('pasted_text')) : null,
+            'signed_by'     => $request->input('signed_by') ?? null,
+            'signed_at'     => $request->filled('signed_at') ? Carbon::parse($request->input('signed_at')) : null,
+        ]);
 
-        $version->change_note = $request->input('change_note');
-        $version->signed_by   = $request->input('signed_by');
-        $version->signed_at   = $request->filled('signed_at')
-            ? Carbon::parse($request->input('signed_at'))
-            : null;
-
-        // simpan teks jika ada (plain_text & pasted_text disamakan)
-        if ($request->filled('pasted_text')) {
-            $text = (string) $request->input('pasted_text');
-            $version->plain_text  = $text;
-            $version->pasted_text = $text;
+        // If the user explicitly asked to publish (rare), allow publish when they have rights
+        if ($request->input('action') === 'publish' && $this->userHasAnyRole($user, ['director','admin'])) {
+            DB::transaction(function() use ($version, $user, $document) {
+                $version->update(['status'=>'approved','approval_stage'=>'DONE','approved_by'=>$user->id,'approved_at'=>now()]);
+                $document->update(['current_version_id'=>$version->id, 'revision_date'=>now()]);
+            });
         }
 
-        $version->save();
+        $this->maybeAudit('version_created', $user->id ?? null, $document->id, $version->id, $request->ip(), [
+            'pdf' => $pdf_path, 'master' => $master_path, 'version' => $versionLabel
+        ]);
 
-        return redirect()
-            ->route('versions.show', $version)
-            ->with('success', 'Version created (draft). You can Submit for Approval when ready.');
+        return redirect()->route('versions.show', $version)->with('success', 'Versi tersimpan sebagai draft.');
     }
 
-    /**
-     * Tampilkan form edit
-     */
+    /* ------------------------
+     * Edit form
+     * ------------------------ */
     public function edit(DocumentVersion $version)
     {
         $document = $version->document;
-
-        return view('versions.edit', compact('version', 'document'));
+        return view('versions.edit', compact('version','document'));
     }
 
-    /**
-     * Update versi (boleh ganti file, teks, catatan)
-     */
+    /* ------------------------
+     * Update existing version
+     * - keep old masters (do not delete historical files)
+     * - if master_file uploaded -> add new master_path
+     * - if file uploaded -> add new pdf_path and file_path
+     * ------------------------ */
     public function update(Request $request, DocumentVersion $version)
     {
         $request->validate([
-            'version_label' => ['required', 'string', 'max:50'],
-
-            // file opsional; jika tidak upload, file lama dipertahankan
-            'file'        => ['nullable', 'file', 'mimes:pdf,doc,docx', 'max:51200'],
-            'pasted_text' => ['nullable', 'string', 'max:500000'],
-
-            'change_note' => ['nullable', 'string', 'max:2000'],
-            'signed_by'   => ['nullable', 'string', 'max:191'],
-            'signed_at'   => ['nullable', 'date'],
+            'version_label' => ['required','string','max:50'],
+            'file'          => ['nullable','file','mimes:pdf','max:51200'],
+            'master_file'   => ['nullable','file','mimes:doc,docx','max:102400'],
+            'pasted_text'   => ['nullable','string','max:500000'],
+            'change_note'   => ['nullable','string','max:2000'],
+            'signed_by'     => ['nullable','string','max:191'],
+            'signed_at'     => ['nullable','date'],
+            'action'        => ['nullable','in:save,submit'],
         ]);
 
-        $filePath = $version->file_path;
-        $fileMime = $version->file_mime;
-        $checksum = $version->checksum;
+        $user = $request->user();
+        $disk = $this->getDisk();
 
-        $disk = Storage::disk('documents');
+        // decide final version label: coerce to next if user tried to reuse older label
+        $preferred = trim($request->input('version_label'));
+        $versionLabel = $this->normalizeVersionLabel($version->document, $preferred, $version->id);
 
-        if ($request->hasFile('file')) {
-            // hapus file lama jika ada
-            if ($version->file_path && $disk->exists($version->file_path)) {
-                $disk->delete($version->file_path);
+        $docCode = $version->document->doc_code ?: ('doc_'.$version->document_id);
+        $folder = trim($docCode . '/' . $versionLabel, '/');
+
+        // master
+        if ($request->hasFile('master_file')) {
+            $master = $request->file('master_file');
+            $safe = $this->safeFilename($master->getClientOriginalName());
+            $masterName = now()->timestamp . '_master_' . Str::random(6) . '_' . $safe;
+            $masterPath = trim($folder . '/master/' . $masterName, '/');
+            try {
+                $disk->put($masterPath, file_get_contents($master->getRealPath()));
+                $version->master_path = $masterPath;
+            } catch (\Throwable) {
+                // ignore write errors
             }
-
-            $file   = $request->file('file');
-            $folder = ($version->document->doc_code ?: 'misc') . '/' . now()->format('Ymd');
-
-            $original = pathinfo($file->getClientOriginalName(), PATHINFO_FILENAME);
-            $ext      = $file->getClientOriginalExtension();
-            $safeName = $this->safeFilename($original) . ($ext ? ".{$ext}" : '');
-            $safeName = now()->timestamp . '_' . Str::random(6) . '_' . $safeName;
-
-            $filePath = trim($folder . '/' . $safeName, '/');
-            $disk->put($filePath, file_get_contents($file->getRealPath()));
-
-            $fileMime = $file->getClientMimeType() ?: 'application/octet-stream';
-            $checksum = hash_file('sha256', $file->getRealPath());
         }
 
-        $version->version_label = (string) $request->string('version_label');
+        // pdf
+        if ($request->hasFile('file')) {
+            $file = $request->file('file');
+            $safe = $this->safeFilename($file->getClientOriginalName());
+            $fileName = now()->timestamp . '_pdf_' . Str::random(6) . '_' . $safe;
+            $pdfPath = trim($folder . '/' . $fileName, '/');
+            try {
+                $content = file_get_contents($file->getRealPath());
+                $disk->put($pdfPath, $content);
+                $version->pdf_path = $pdfPath;
+                $version->file_path = $pdfPath; // backward compatible
+                $version->file_mime = $file->getClientMimeType() ?: 'application/pdf';
+                $version->checksum = hash('sha256', $content);
+            } catch (\Throwable) {
+                // ignore write errors (keep old)
+            }
+        }
 
-        if ($request->has('change_note')) {
-            $version->change_note = $request->input('change_note');
-        }
-        if ($request->has('signed_by')) {
-            $version->signed_by = $request->input('signed_by');
-        }
-        if ($request->has('signed_at')) {
-            $version->signed_at = $request->filled('signed_at')
-                ? Carbon::parse($request->input('signed_at'))
-                : null;
-        }
+        // metadata
+        $version->version_label = $versionLabel;
+        if ($request->has('change_note')) $version->change_note = $request->input('change_note');
+        if ($request->has('signed_by')) $version->signed_by = $request->input('signed_by');
+        if ($request->has('signed_at')) $version->signed_at = $request->filled('signed_at') ? Carbon::parse($request->input('signed_at')) : null;
         if ($request->has('pasted_text')) {
-            $text = $request->input('pasted_text') ?: null;
-            $version->plain_text  = $text;
-            $version->pasted_text = $text;
+            $t = $request->input('pasted_text') ?: null;
+            $version->plain_text = $t;
+            $version->pasted_text = $t;
         }
-
-        $version->file_path = $filePath;
-        $version->file_mime = $fileMime;
-        $version->checksum  = $checksum;
 
         $version->save();
 
-        return redirect()
-            ->route('versions.show', $version)
-            ->with('success', 'Version updated.');
+        // if requested to submit
+        if ($request->input('action') === 'submit') {
+            return $this->submitForApproval($request, $version->id);
+        }
+
+        $this->maybeAudit('version_updated', $user->id ?? null, $version->document_id, $version->id, $request->ip(), [
+            'pdf' => $version->pdf_path, 'master' => $version->master_path
+        ]);
+
+        return redirect()->route('versions.show', $version)->with('success','Version updated.');
     }
 
-    /**
-     * Detail satu versi
-     */
+    /* ------------------------
+     * Show single version
+     * ------------------------ */
     public function show(DocumentVersion $version)
     {
-        // eager load relasi penting
-        $version->load(['document.department', 'creator']);
-
-        // versi lain dari dokumen yang sama (sidebar/list)
-        $otherVersions = DocumentVersion::where('document_id', $version->document_id)
-            ->orderByDesc('id')
-            ->get();
-
-        return view('versions.show', [
-            'version'       => $version,
-            'document'      => $version->document,
-            'otherVersions' => $otherVersions,
-        ]);
+        $version->load(['document.department','creator']);
+        $otherVersions = DocumentVersion::where('document_id', $version->document_id)->orderByDesc('id')->get();
+        return view('versions.show', ['version'=>$version,'document'=>$version->document,'otherVersions'=>$otherVersions]);
     }
 
-    /**
-     * Submit versi untuk approval (KABAG -> MR)
-     * Route name yang diharapkan: versions.submit
-     *
-     * Improved:
-     * - cek permission (kabag/admin)
-     * - cek status (hanya draft boleh submit)
-     * - set next stage sesuai role pengaju (KABAG -> MR, MR -> DIRECTOR, director -> DONE)
-     * - simpan submitted_by / submitted_at jika kolom ada
-     * - log ke approval_logs bila tersedia
-     */
+    /* ------------------------
+     * Submit for approval (KABAG -> MR etc)
+     * ------------------------ */
     public function submitForApproval(Request $request, $id)
     {
         $user = Auth::user();
-
-        // permission check: kabag or admin (tolerant)
-        if (! $this->userHasAnyRole($user, ['kabag', 'admin'])) {
-            return back()->with('error', 'Anda tidak memiliki izin untuk mengirimkan versi ini.');
-        }
+        if (! $user) abort(403);
 
         $version = DocumentVersion::with('document')->findOrFail($id);
 
-        // Cegah submit ulang versi final
-        if (in_array($version->status, ['approved', 'rejected', 'superseded'], true)) {
-            return back()->with('warning', 'Versi ini sudah final dan tidak dapat dikirim.');
+        // only drafts/rejected allowed
+        if (! in_array($version->status, ['draft','rejected'], true)) {
+            return back()->with('error','Hanya draft/rejected yang dapat diajukan.');
         }
 
-        // hanya izinkan submit jika masih draft (atau sesuai kebijakan)
-        if ($version->status !== 'draft') {
-            return back()->with('error', 'Versi ini bukan berstatus draft dan tidak dapat disubmit lagi.');
+        // prevent double submission
+        $pending = DocumentVersion::where('document_id', $version->document_id)
+            ->whereIn('status', ['submitted','pending'])
+            ->exists();
+        if ($pending) {
+            return back()->with('error','Terdapat revisi lain yang sedang diajukan.');
         }
 
-        // tentukan next stage berdasarkan role user yang mengirim
+        // determine next stage
         $nextStage = 'MR';
-        if ($this->userHasAnyRole($user, ['mr'])) {
-            $nextStage = 'DIRECTOR';
-        } elseif ($this->userHasAnyRole($user, ['director'])) {
-            $nextStage = 'DONE';
-        }
+        if ($this->userHasAnyRole($user, ['mr'])) $nextStage = 'DIRECTOR';
+        if ($this->userHasAnyRole($user, ['director'])) $nextStage = 'DONE';
 
-        DB::transaction(function () use ($version, $user, $nextStage) {
+        DB::transaction(function() use ($version, $user, $nextStage) {
             $version->status = 'submitted';
             $version->approval_stage = $nextStage;
-
-            if (Schema::hasColumn('document_versions', 'submitted_by')) {
-                $version->submitted_by = $user->id;
-            }
-            if (Schema::hasColumn('document_versions', 'submitted_at')) {
-                $version->submitted_at = now();
-            }
-
+            if ($this->hasColumn($version, 'submitted_by')) $version->submitted_by = $user->id;
+            if ($this->hasColumn($version, 'submitted_at')) $version->submitted_at = now();
             $version->save();
 
-            // insert into approval_logs table if exists
-            $this->insertApprovalLog(
-                $version->id,
-                $user->id,
-                $this->getCurrentRoleName($user),
-                'submit',
-                'Submitted for approval to ' . $nextStage
-            );
+            $this->insertApprovalLog($version->id, $user->id, $this->getCurrentRoleName($user), 'submit', 'Submitted to ' . $nextStage);
         });
 
-        return back()->with('success', 'Dokumen telah dikirim ke ' . $nextStage . ' untuk persetujuan.');
+        $this->maybeAudit('version_submitted', $user->id ?? null, $version->document_id, $version->id, $request->ip(), ['stage'=>$nextStage]);
+
+        return redirect()->route('approval.index')->with('success','Draft berhasil diajukan ke ' . $nextStage);
     }
 
-    /* ----------------------
-       Helper functions
-       ---------------------- */
+    /* ------------------------
+     * Helpers
+     * ------------------------ */
 
-    /**
-     * Cek apakah user punya salah satu role (tolerant: Spatie, relation, property)
-     */
+    protected function getDisk()
+    {
+        try { return Storage::disk($this->diskName); } catch (\Throwable) { return Storage::disk('public'); }
+    }
+
+    protected function getAvailableDisks(): array
+    {
+        $list = [];
+        try { $list[] = Storage::disk($this->diskName); } catch (\Throwable) {}
+        try { $list[] = Storage::disk('public'); } catch (\Throwable) {}
+        return $list;
+    }
+
+    protected function safeDiskCall(callable $fn)
+    {
+        try { return $fn(); } catch (\Throwable) { return null; }
+    }
+
+    protected function hasColumn($modelOrInstance, string $column): bool
+    {
+        try {
+            $table = is_object($modelOrInstance) ? $modelOrInstance->getTable() : (string)$modelOrInstance;
+            return Schema::hasColumn($table, $column);
+        } catch (\Throwable) {
+            return false;
+        }
+    }
+
+    protected function maybeAudit(string $event, $userId = null, $documentId = null, $documentVersionId = null, $ip = null, $detail = [])
+    {
+        if (! class_exists(\App\Models\AuditLog::class)) return;
+        try {
+            \App\Models\AuditLog::create([
+                'event' => $event,
+                'user_id' => $userId,
+                'document_id' => $documentId,
+                'document_version_id' => $documentVersionId,
+                'detail' => json_encode($detail),
+                'ip' => $ip,
+            ]);
+        } catch (\Throwable) { /* ignore */ }
+    }
+
     protected function userHasAnyRole($user, array $roles): bool
     {
         if (! $user) return false;
-
-        // spatie:
         if (method_exists($user, 'hasAnyRole')) {
-            try {
-                if ($user->hasAnyRole($roles)) return true;
-            } catch (\Throwable $e) {
-                // ignore
-            }
+            try { if ($user->hasAnyRole($roles)) return true; } catch (\Throwable) {}
         }
-
-        // relation roles()
         if (method_exists($user, 'roles')) {
             try {
-                $names = $user->roles()->pluck('name')->map(fn($n) => strtolower($n))->toArray();
-                foreach ($roles as $r) {
-                    if (in_array(strtolower($r), $names, true)) return true;
-                }
-            } catch (\Throwable $e) {
-                // ignore
-            }
+                $names = $user->roles()->pluck('name')->map(fn($n)=>strtolower($n))->toArray();
+                foreach ($roles as $r) if (in_array(strtolower($r), $names, true)) return true;
+            } catch (\Throwable) {}
         }
-
-        // property roles collection
         if (isset($user->roles) && is_iterable($user->roles)) {
-            $names = collect($user->roles)->pluck('name')->map(fn($n) => strtolower($n))->toArray();
-            foreach ($roles as $r) {
-                if (in_array(strtolower($r), $names, true)) return true;
-            }
+            $names = collect($user->roles)->pluck('name')->map(fn($n)=>strtolower($n))->toArray();
+            foreach ($roles as $r) if (in_array(strtolower($r), $names, true)) return true;
         }
-
-        // fallback whitelist by email (opsional)
-        $whitelist = [
-            'direktur@peroniks.com',
-            'adminqc@peroniks.com',
-        ];
-        if (! empty($user->email) && in_array(strtolower($user->email), $whitelist, true)) {
-            return true;
-        }
-
+        $whitelist = ['direktur@peroniks.com','adminqc@peroniks.com'];
+        if (! empty($user->email) && in_array(strtolower($user->email), $whitelist, true)) return true;
         return false;
     }
 
     protected function getCurrentRoleName($user): string
     {
         if (! $user) return 'unknown';
-
         if (method_exists($user, 'getRoleNames')) {
-            try {
-                $names = $user->getRoleNames()->toArray();
-                return $names[0] ?? 'unknown';
-            } catch (\Throwable $e) {
-                // ignore
-            }
+            try { $names = $user->getRoleNames()->toArray(); return $names[0] ?? 'unknown'; } catch (\Throwable) {}
         }
-
         if (method_exists($user, 'roles')) {
-            try {
-                return $user->roles()->pluck('name')->first() ?? 'unknown';
-            } catch (\Throwable $e) {
-                // ignore
-            }
+            try { return $user->roles()->pluck('name')->first() ?? 'unknown'; } catch (\Throwable) {}
         }
-
         if (isset($user->roles) && is_iterable($user->roles)) {
             return collect($user->roles)->pluck('name')->first() ?? 'unknown';
         }
-
         return 'unknown';
     }
 
-    /**
-     * Insert an approval log row if table exists.
-     */
     protected function insertApprovalLog(int $versionId, int $userId, string $role, string $action, ?string $note = null): void
     {
-        if (! Schema::hasTable('approval_logs')) {
-            return;
-        }
-
+        if (! Schema::hasTable('approval_logs')) return;
         DB::table('approval_logs')->insert([
             'document_version_id' => $versionId,
             'user_id'             => $userId,
@@ -374,12 +374,53 @@ class DocumentVersionController extends Controller
         ]);
     }
 
-    /**
-     * Amankan nama file (tanpa karakter aneh)
-     */
     protected function safeFilename(string $original): string
     {
-        $name = preg_replace('/[^\w\.\-]+/u', '_', $original);
-        return $name ?: ('file_' . Str::random(8));
+        $name = preg_replace('/[^\w\.\-]+/u','_', $original);
+        return $name ?: ('file_'.Str::random(8));
+    }
+
+    /**
+     * Normalize/generate version label:
+     * - If preferred is null -> next vN
+     * - If preferred provided but <= current max -> coerce to next vN (to avoid collisions)
+     * - Optionally pass $ignoreId to allow reusing same label for updating that version
+     */
+    protected function normalizeVersionLabel(Document $document, ?string $preferred = null, ?int $ignoreId = null): string
+    {
+        // find max numeric suffix among existing versions for this document
+        $existing = DocumentVersion::where('document_id', $document->id)
+            ->when($ignoreId, fn($q) => $q->where('id', '<>', $ignoreId))
+            ->pluck('version_label')->filter()->values()->all();
+
+        $max = 0;
+        foreach ($existing as $lbl) {
+            if (preg_match('/v(\d+)$/i', trim($lbl), $m)) {
+                $n = (int)$m[1];
+                if ($n > $max) $max = $n;
+            }
+        }
+
+        $next = $max + 1;
+
+        // if user didn't provide label -> next
+        if (empty($preferred)) {
+            return 'v' . $next;
+        }
+
+        // normalize user's input: if it's like "v3" accept; else force to lowercase and trim
+        $p = trim($preferred);
+        if (preg_match('/^v(\d+)$/i', $p, $m)) {
+            $num = (int)$m[1];
+            if ($num > $max) {
+                return 'v' . $num;
+            } else {
+                // user tried to create older or duplicate version -> force next
+                return 'v' . $next;
+            }
+        }
+
+        // if not in vN pattern, don't allow free arbitrary labels -> use next
+        return 'v' . $next;
     }
 }

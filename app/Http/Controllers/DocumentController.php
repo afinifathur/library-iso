@@ -60,7 +60,7 @@ class DocumentController extends Controller
     }
 
     /* -------------------------
-     * CREATE / REPLACE (store)
+     * STORE (create new OR replace)
      * ------------------------- */
 
     public function store(Request $request)
@@ -82,12 +82,15 @@ class DocumentController extends Controller
         return $this->handleCreateNew($request, $user, $submit);
     }
 
+    /* -------------------------
+     * HANDLE: Replace (upload replacement / new draft for existing doc)
+     * ------------------------- */
     protected function handleReplace(Request $request, $user)
     {
         $validated = $request->validate([
             'doc_code'      => ['required','string','exists:documents,doc_code'],
             'version_label' => ['nullable','string','max:50'],
-            'file'          => 'nullable|file|mimes:pdf,doc,docx|max:51200',
+            'file'          => 'nullable|file|mimes:pdf|max:51200',
             'master_file'   => 'nullable|file|mimes:doc,docx|max:102400',
             'pasted_text'   => 'nullable|string',
             'change_note'   => 'nullable|string|max:2000',
@@ -101,31 +104,35 @@ class DocumentController extends Controller
         $file_mime = null;
         $checksum = null;
 
-        // master_file (doc/docx)
+        $document = Document::where('doc_code', $validated['doc_code'])->firstOrFail();
+
+        // choose version label: if provided, try to coerce to newest vN; else auto next
+        $versionLabel = $this->resolveVersionLabelForNewVersion($document, $validated['version_label'] ?? null);
+
+        $folder = trim($document->doc_code . '/' . $versionLabel, '/');
+
+        // store master_file if provided
         if ($request->hasFile('master_file')) {
             $master = $request->file('master_file');
             $safe = $this->safeFilename($master->getClientOriginalName());
             $name = now()->timestamp . '_master_' . Str::random(6) . '_' . $safe;
-            $folder = trim($validated['doc_code'], '/') . '/' . trim($validated['version_label'] ?? 'draft', '/');
-            $master_path = $folder . '/' . $name;
-            $disk->put($master_path, file_get_contents($master->getRealPath()));
+            $master_path = trim($folder . '/master/' . $name, '/');
+            try { $disk->put($master_path, file_get_contents($master->getRealPath())); } catch (\Throwable) { /* ignore */ }
         }
 
-        // pdf (file)
+        // store pdf if provided
         if ($request->hasFile('file')) {
             $file = $request->file('file');
             $safe = $this->safeFilename($file->getClientOriginalName());
             $name = now()->timestamp . '_pdf_' . Str::random(6) . '_' . $safe;
-            $folder = trim($validated['doc_code'], '/') . '/' . trim($validated['version_label'] ?? 'draft', '/');
-            $pdf_path = $folder . '/' . $name;
+            $pdf_path = trim($folder . '/' . $name, '/');
             $content = file_get_contents($file->getRealPath());
-            $disk->put($pdf_path, $content);
-            $file_mime = $file->getClientMimeType() ?: 'application/octet-stream';
+            try { $disk->put($pdf_path, $content); } catch (\Throwable) { /* ignore */ }
+            $file_mime = $file->getClientMimeType() ?: 'application/pdf';
             $checksum = hash('sha256', $content);
         }
 
-        $document = Document::where('doc_code', $validated['doc_code'])->firstOrFail();
-
+        // find existing draft/rejected to update else create a new draft version
         $draft = DocumentVersion::where('document_id', $document->id)
             ->whereIn('status', ['draft','rejected'])
             ->latest('id')
@@ -137,7 +144,7 @@ class DocumentController extends Controller
             if ($file_mime) $draft->file_mime = $file_mime;
             if ($checksum) $draft->checksum = $checksum;
 
-            $draft->version_label = $validated['version_label'] ?? ($draft->version_label ?? 'draft');
+            $draft->version_label = $versionLabel;
             $draft->change_note = $validated['change_note'] ?? $draft->change_note;
             $draft->pasted_text = $request->input('pasted_text') ?? $draft->pasted_text;
             $draft->plain_text = $request->input('pasted_text') ?? $draft->plain_text;
@@ -149,7 +156,7 @@ class DocumentController extends Controller
         } else {
             $draft = DocumentVersion::create([
                 'document_id'   => $document->id,
-                'version_label' => $validated['version_label'] ?? 'draft',
+                'version_label' => $versionLabel,
                 'status'        => 'draft',
                 'approval_stage'=> 'KABAG',
                 'created_by'    => $user->id,
@@ -173,15 +180,11 @@ class DocumentController extends Controller
         return redirect()->route('drafts.index')->with('success', 'Draft versi baru berhasil dibuat & masuk Draft Container.');
     }
 
+    /* -------------------------
+     * HANDLE: Create New Document (baseline or draft)
+     * ------------------------- */
     protected function handleCreateNew(Request $request, $user, string $submit)
     {
-        if ($request->filled('doc_code')) {
-            $exists = Document::where('doc_code', $request->input('doc_code'))->exists();
-            if ($exists) {
-                return redirect()->back()->withInput()->with('warning', 'Doc code sudah ada. Pilih "Ganti Versi Lama" untuk mengganti versi.');
-            }
-        }
-
         $categoryRule = class_exists(\App\Models\Category::class) ? 'required|integer|exists:categories,id' : 'nullable';
 
         $validated = $request->validate([
@@ -189,7 +192,7 @@ class DocumentController extends Controller
             'title'         => 'required|string|max:255',
             'category_id'   => $categoryRule,
             'department_id' => 'required|integer|exists:departments,id',
-            'file'          => 'nullable|file|mimes:pdf,doc,docx|max:51200',
+            'file'          => 'nullable|file|mimes:pdf|max:51200',
             'master_file'   => 'nullable|file|mimes:doc,docx|max:102400',
             'pasted_text'   => 'nullable|string',
             'version_label' => 'nullable|string|max:50',
@@ -211,41 +214,44 @@ class DocumentController extends Controller
 
         $disk = $this->getDisk();
 
-        $pdf_path = null;
+        // determine version label (auto v1)
+        $versionLabel = $validated['version_label'] ?? $this->nextVersionLabelForDocument($document);
+
+        $folder = trim($document->doc_code . '/' . $versionLabel, '/');
+
         $master_path = null;
-        $file_mime = null;
-        $checksum = null;
-
-        $versionLabel = $validated['version_label'] ?? 'v1';
-        $folder = $document->doc_code . '/' . $versionLabel;
-
         if ($request->hasFile('master_file')) {
             $master = $request->file('master_file');
             $safe = $this->safeFilename($master->getClientOriginalName());
             $master_name = now()->timestamp . '_master_' . Str::random(6) . '_' . $safe;
-            $master_path = $folder . '/' . $master_name;
-            $disk->put($master_path, file_get_contents($master->getRealPath()));
+            $master_path = trim($folder . '/master/' . $master_name, '/');
+            try { $disk->put($master_path, file_get_contents($master->getRealPath())); } catch (\Throwable) { /* ignore */ }
         }
 
+        $pdf_path = null;
+        $file_mime = null;
+        $checksum = null;
         if ($request->hasFile('file')) {
             $file = $request->file('file');
             $safe = $this->safeFilename($file->getClientOriginalName());
             $name = now()->timestamp . '_pdf_' . Str::random(6) . '_' . $safe;
-            $pdf_path = $folder . '/' . $name;
+            $pdf_path = trim($folder . '/' . $name, '/');
             $content = file_get_contents($file->getRealPath());
-            $disk->put($pdf_path, $content);
-            $file_mime = $file->getClientMimeType() ?: 'application/octet-stream';
+            try { $disk->put($pdf_path, $content); } catch (\Throwable) { /* ignore */ }
+            $file_mime = $file->getClientMimeType() ?: 'application/pdf';
             $checksum = hash('sha256', $content);
         }
 
+        // If submit === 'publish' then baseline approved immediately
         if ($submit === 'publish') {
             $version = DocumentVersion::create([
                 'document_id'   => $document->id,
                 'version_label' => $versionLabel,
                 'status'        => 'approved',
                 'approval_stage'=> 'DONE',
-                'master_path'   => $master_path,
                 'pdf_path'      => $pdf_path,
+                'file_path'     => $pdf_path, // backward compatibility: file_path points to latest pdf
+                'master_path'   => $master_path,
                 'file_mime'     => $file_mime,
                 'checksum'      => $checksum,
                 'change_note'   => $validated['change_note'] ?? null,
@@ -266,13 +272,15 @@ class DocumentController extends Controller
             return redirect()->route('documents.show', $document->id)->with('success', 'Baseline uploaded and published.');
         }
 
+        // Save as draft
         $version = DocumentVersion::create([
             'document_id'   => $document->id,
             'version_label' => $versionLabel,
             'status'        => 'draft',
             'approval_stage'=> 'KABAG',
-            'master_path'   => $master_path,
             'pdf_path'      => $pdf_path,
+            'file_path'     => $pdf_path,
+            'master_path'   => $master_path,
             'file_mime'     => $file_mime,
             'checksum'      => $checksum,
             'change_note'   => $validated['change_note'] ?? null,
@@ -286,7 +294,7 @@ class DocumentController extends Controller
     }
 
     /* -------------------------
-     * UPDATE COMBINED
+     * UPDATE COMBINED (metadata + version)
      * ------------------------- */
 
     public function updateCombined(Request $request, Document $document)
@@ -311,6 +319,7 @@ class DocumentController extends Controller
         $rawSubmit = strtolower(trim((string)($validated['submit_for'] ?? $request->input('submit_for', ''))));
         $submitFor = in_array($rawSubmit, ['publish','submit'], true) ? 'submit' : 'save';
 
+        // metadata update
         $document->update([
             'doc_code'      => $validated['doc_code'],
             'title'         => $validated['title'],
@@ -326,6 +335,7 @@ class DocumentController extends Controller
         $user = $request->user();
         $disk = $this->getDisk();
 
+        // find existing version to update (draft by this user) or use provided version id
         $version = null;
         if (!empty($validated['version_id'])) {
             $version = DocumentVersion::where('document_id', $document->id)->where('id', $validated['version_id'])->first();
@@ -354,43 +364,46 @@ class DocumentController extends Controller
             $version->approval_stage = 'KABAG';
         }
 
-        // keep existing paths
+        // keep existing paths/metadata if present
         $master_path = $version->master_path ?? null;
         $pdf_path = $version->pdf_path ?? null;
         $file_mime = $version->file_mime ?? null;
         $checksum  = $version->checksum ?? null;
 
-        $versionLabel = $validated['version_label'];
-        $folder = $document->doc_code . '/' . $versionLabel;
+        // determine final version label (we enforce next vN if user-provided label conflicts)
+        $requestedLabel = $validated['version_label'];
+        $versionLabel = $this->resolveVersionLabelForNewVersion($document, $requestedLabel);
 
+        $folder = trim($document->doc_code . '/' . $versionLabel, '/');
+
+        // store master_file if uploaded
         if ($request->hasFile('master_file')) {
             $master = $request->file('master_file');
             $safe = $this->safeFilename($master->getClientOriginalName());
             $name = now()->timestamp . '_master_' . Str::random(6) . '_' . $safe;
-            $master_path = $folder . '/' . $name;
-            $disk->put($master_path, file_get_contents($master->getRealPath()));
+            $master_path = trim($folder . '/master/' . $name, '/');
+            try { $disk->put($master_path, file_get_contents($master->getRealPath())); } catch (\Throwable) { /* ignore */ }
         }
 
+        // store pdf if uploaded
         if ($request->hasFile('file')) {
-            if ($pdf_path && $disk->exists($pdf_path)) {
-                try { /* do not delete approved historic files; only delete user-draft replacement if created_by same user */ } catch (\Throwable) {}
-            }
-
             $file = $request->file('file');
             $safe = $this->safeFilename($file->getClientOriginalName());
             $name = now()->timestamp . '_pdf_' . Str::random(6) . '_' . $safe;
-            $pdf_path = $folder . '/' . $name;
+            $pdf_path = trim($folder . '/' . $name, '/');
             $content = file_get_contents($file->getRealPath());
-            $disk->put($pdf_path, $content);
-            $file_mime = $file->getClientMimeType() ?: 'application/octet-stream';
+            try { $disk->put($pdf_path, $content); } catch (\Throwable) { /* ignore */ }
+            $file_mime = $file->getClientMimeType() ?: 'application/pdf';
             $checksum = hash('sha256', $content);
         }
 
         $version->version_label = $versionLabel;
-        $version->master_path   = $master_path;
-        $version->pdf_path      = $pdf_path;
-        $version->file_mime     = $file_mime;
-        $version->checksum      = $checksum;
+        $version->master_path   = $master_path ?? $version->master_path;
+        $version->pdf_path      = $pdf_path ?? $version->pdf_path;
+        // keep file_path for backward compatibility: point to pdf_path if present
+        $version->file_path     = $version->pdf_path ?? $version->file_path;
+        $version->file_mime     = $file_mime ?? $version->file_mime;
+        $version->checksum      = $checksum ?? $version->checksum;
         $version->change_note   = $validated['change_note'] ?? $version->change_note;
         $version->signed_by     = $validated['signed_by'] ?? $version->signed_by;
         $version->signed_at     = !empty($validated['signed_at']) ? Carbon::parse($validated['signed_at']) : $version->signed_at;
@@ -423,11 +436,11 @@ class DocumentController extends Controller
     }
 
     /* -------------------------
-     * UPLOAD PDF (separate flow)
+     * UPLOAD PDF (ALTERNATIVE FLOW kept for compatibility)
      * ------------------------- */
-
     public function uploadPdf(Request $request)
     {
+        // kept for backward compatibility / small uploader forms
         $user = $request->user();
         if (! $user) return redirect()->route('login')->with('error', 'Login required to upload documents.');
         if (! $this->userCanUpload($user)) abort(403, 'Anda tidak memiliki hak untuk mengunggah dokumen.');
@@ -464,13 +477,16 @@ class DocumentController extends Controller
 
         $disk = $this->getDisk();
 
+        $versionLabel = $validated['version_label'] ?? $this->nextVersionLabelForDocument($document);
+        $folder = trim($document->doc_code . '/' . $versionLabel, '/');
+
         $master_path = null;
         if ($request->hasFile('master_file')) {
             $master = $request->file('master_file');
             $safeName = $this->safeFilename($master->getClientOriginalName());
             $master_name = now()->timestamp . '_master_' . Str::random(6) . '_' . $safeName;
-            $master_path = $document->doc_code . '/' . $validated['version_label'] . '/' . $master_name;
-            $disk->put($master_path, file_get_contents($master->getRealPath()));
+            $master_path = trim($folder . '/master/' . $master_name, '/');
+            try { $disk->put($master_path, file_get_contents($master->getRealPath())); } catch (\Throwable) { /* ignore */ }
         }
 
         $pdf_path = null; $file_mime = null; $checksum = null;
@@ -478,9 +494,9 @@ class DocumentController extends Controller
             $file = $request->file('file');
             $safeName = $this->safeFilename($file->getClientOriginalName());
             $filename = now()->timestamp . '_pdf_' . Str::random(6) . '_' . $safeName;
-            $pdf_path = $document->doc_code . '/' . $validated['version_label'] . '/' . $filename;
+            $pdf_path = trim($folder . '/' . $filename, '/');
             $content = file_get_contents($file->getRealPath());
-            $disk->put($pdf_path, $content);
+            try { $disk->put($pdf_path, $content); } catch (\Throwable) { /* ignore */ }
             $file_mime = $file->getClientMimeType() ?: 'application/pdf';
             $checksum = hash('sha256', $content);
         }
@@ -493,12 +509,13 @@ class DocumentController extends Controller
 
         $version = DocumentVersion::create([
             'document_id'   => $document->id,
-            'version_label' => $validated['version_label'],
+            'version_label' => $versionLabel,
             'status'        => 'draft',
             'approval_stage'=> 'KABAG',
             'created_by'    => $user->id,
             'master_path'   => $master_path,
             'pdf_path'      => $pdf_path,
+            'file_path'     => $pdf_path,
             'file_mime'     => $file_mime,
             'checksum'      => $checksum,
             'change_note'   => $validated['change_note'] ?? null,
@@ -506,6 +523,7 @@ class DocumentController extends Controller
             'signed_at'     => !empty($validated['signed_at']) ? Carbon::parse($validated['signed_at']) : null,
         ]);
 
+        // prefer pasted_text only (lightweight)
         if ($request->filled('pasted_text')) {
             $pasted = $this->normalizeText($request->input('pasted_text'));
             $version->pasted_text = $pasted;
@@ -513,24 +531,12 @@ class DocumentController extends Controller
             $version->summary_changed = 'Text provided by uploader (pasted).';
             $version->save();
         } else {
-            $extracted = null;
-            if ($master_path && $disk->exists($master_path) && Str::endsWith(strtolower($master_path), '.docx')) {
-                $binary = $disk->get($master_path);
-                $extracted = $this->extractDocxText($binary);
-            }
-            if (!$extracted && $version->pdf_path && $disk->exists($version->pdf_path)) {
-                $extracted = $this->extractPdfText($version);
-            }
-            if ($extracted) {
-                $version->plain_text = $extracted;
-                $version->summary_changed = 'Text extracted automatically.';
-            } else {
-                $version->summary_changed = 'No text available.';
-            }
+            // do not run heavy extraction automatically — skip to keep upload lightweight.
+            $version->summary_changed = 'No text provided (pasted_text preferred).';
             $version->save();
         }
 
-        // do NOT alter current_version_id here; only metadata (title/department)
+        // do NOT alter current_version_id here; only metadata update allowed
         $document->title = $validated['title'];
         $document->department_id = (int)$validated['department_id'];
         $document->save();
@@ -597,6 +603,7 @@ class DocumentController extends Controller
         $user = $request->user();
         if (! $user) abort(403);
 
+        // MR forwards to DIRECTOR
         if (method_exists($user, 'hasAnyRole') && $user->hasAnyRole(['mr'])) {
             $version->update([
                 'status' => 'submitted',
@@ -607,6 +614,7 @@ class DocumentController extends Controller
             return back()->with('success','Version forwarded to Director.');
         }
 
+        // Director/Admin final approval
         if (method_exists($user, 'hasAnyRole') && $user->hasAnyRole(['director','admin'])) {
             DB::transaction(function () use ($version, $user) {
                 $update = ['status' => 'approved', 'approval_stage' => 'DONE'];
@@ -672,6 +680,7 @@ class DocumentController extends Controller
     {
         $document->load(['department', 'versions.creator']);
 
+        // prefer explicit version if requested
         $requestedVersionId = null;
         try { $requestedVersionId = request()->query('version_id') ? (int) request()->query('version_id') : null; } catch (\Throwable) { $requestedVersionId = null; }
 
@@ -681,45 +690,24 @@ class DocumentController extends Controller
             $version = $document->versions()->where('id', $requestedVersionId)->first();
         }
 
+        // prefer document.current_version_id (approved)
         if (! $version && isset($document->current_version_id) && $document->current_version_id) {
             $version = $document->versions()->where('id', $document->current_version_id)->first();
         }
 
+        // else latest approved
         if (! $version) {
             $version = $document->versions()->where('status', 'approved')->orderByDesc('id')->first();
         }
 
+        // fallback: any version (draft/rejected)
         if (! $version) {
             $version = $document->versions()->orderByDesc('id')->first();
         }
 
         $versions = $document->versions->sortByDesc('id')->values();
 
-        $relatedLinks = [];
-        $rawLinks = $document->related_links ?? null;
-        if ($rawLinks !== null) {
-            if (is_string($rawLinks)) {
-                $decoded = json_decode($rawLinks, true);
-                if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) $rawLinks = $decoded;
-                else $rawLinks = [$rawLinks];
-            } elseif (!is_array($rawLinks)) {
-                $rawLinks = [];
-            }
-
-            foreach ($rawLinks as $url) {
-                if (!is_string($url) || trim($url) === '') continue;
-                $url = trim($url);
-                $label = $url;
-                if (preg_match('#/documents/(\d+)#', $url, $m)) {
-                    $docRef = Document::find((int)$m[1]);
-                    if ($docRef) $label = trim(($docRef->doc_code ? $docRef->doc_code.' — ' : '').$docRef->title) ?: $url;
-                } else {
-                    $short = preg_replace('#^https?://#i', '', $url);
-                    $label = strlen($short) > 48 ? substr($short,0,45).'...' : $short;
-                }
-                $relatedLinks[] = ['url'=>$url,'label'=>$label];
-            }
-        }
+        $relatedLinks = $this->normalizeRelatedLinks($document);
 
         if ($version && (! property_exists($version,'signature') || $version->signature === null)) {
             $version->signature = (object)['signed_at'=>null,'signed_by'=>null];
@@ -735,7 +723,7 @@ class DocumentController extends Controller
     {
         $disk = $this->getDisk();
 
-        // prefer pdf_path, then file_path/master_path as fallback
+        // prefer pdf_path, then file_path, then master_path as fallback
         $candidates = [$version->pdf_path ?? null, $version->file_path ?? null, $version->master_path ?? null];
 
         foreach ($candidates as $p) {
@@ -771,11 +759,11 @@ class DocumentController extends Controller
 
         $disks = $this->getAvailableDisks();
 
-        // prefer version.master_path -> version.pdf_path (if no master but want to force docx?) -> version.file_path
+        // prefer master_path -> pdf_path -> file_path
         $candidates = [
             $version->master_path ?? null,
-            $version->file_path ?? null,
             $version->pdf_path ?? null,
+            $version->file_path ?? null,
         ];
 
         foreach ($disks as $disk) {
@@ -813,6 +801,7 @@ class DocumentController extends Controller
         abort(404, 'Master file not found.');
     }
 
+    // previewVersion: only inline PDF
     public function previewVersion(DocumentVersion $version)
     {
         $user = request()->user();
@@ -820,7 +809,6 @@ class DocumentController extends Controller
 
         $disks = $this->getAvailableDisks();
 
-        // prefer pdf_path then file_path then master_path (only pdf inline)
         $candidates = [$version->pdf_path ?? null, $version->file_path ?? null, $version->master_path ?? null];
 
         foreach ($disks as $disk) {
@@ -860,7 +848,7 @@ class DocumentController extends Controller
     }
 
     /* -------------------------
-     * HELPERS
+     * HELPERS & UTILITIES
      * ------------------------- */
 
     protected function getDisk()
@@ -935,6 +923,37 @@ class DocumentController extends Controller
         return array_values(array_filter($lines, fn($l) => ! empty($l)));
     }
 
+    protected function normalizeRelatedLinks(Document $document): array
+    {
+        $relatedLinks = [];
+        $rawLinks = $document->related_links ?? null;
+        if ($rawLinks !== null) {
+            if (is_string($rawLinks)) {
+                $decoded = json_decode($rawLinks, true);
+                if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) $rawLinks = $decoded;
+                else $rawLinks = [$rawLinks];
+            } elseif (!is_array($rawLinks)) {
+                $rawLinks = [];
+            }
+
+            foreach ($rawLinks as $url) {
+                if (!is_string($url) || trim($url) === '') continue;
+                $url = trim($url);
+                $label = $url;
+                if (preg_match('#/documents/(\d+)#', $url, $m)) {
+                    $docRef = Document::find((int)$m[1]);
+                    if ($docRef) $label = trim(($docRef->doc_code ? $docRef->doc_code.' — ' : '').$docRef->title) ?: $url;
+                } else {
+                    $short = preg_replace('#^https?://#i', '', $url);
+                    $label = strlen($short) > 48 ? substr($short,0,45).'...' : $short;
+                }
+                $relatedLinks[] = ['url'=>$url,'label'=>$label];
+            }
+        }
+        return $relatedLinks;
+    }
+
+    // NOTE: extraction helpers kept but not used automatically (we prefer pasted_text)
     protected function extractDocxText(string $binary): ?string
     {
         try {
@@ -998,5 +1017,57 @@ class DocumentController extends Controller
     {
         if (is_numeric($rev)) return (int)$rev + 1;
         return 1;
+    }
+
+    /**
+     * Determine next version label for a document: v1, v2, v3...
+     */
+    protected function nextVersionLabelForDocument(Document $document): string
+    {
+        $latest = DocumentVersion::where('document_id', $document->id)
+            ->whereRaw("version_label REGEXP '^v[0-9]+'")
+            ->orderByDesc('id')
+            ->get()
+            ->pluck('version_label')
+            ->map(fn($v) => (int) preg_replace('/[^0-9]/', '', $v))
+            ->filter()
+            ->max();
+
+        $next = ($latest ? $latest + 1 : 1);
+        return 'v' . $next;
+    }
+
+    /**
+     * Resolve version label for new upload: if user-supplied label conflicts with existing older v-number,
+     * force using next available vN (to avoid accidental overwrites).
+     */
+    protected function resolveVersionLabelForNewVersion(Document $document, ?string $requested): string
+    {
+        if (empty($requested)) return $this->nextVersionLabelForDocument($document);
+
+        // normalize requested like 'v2' or arbitrary string; if it's vN and N > existing max -> accept, else force next.
+        $requested = trim($requested);
+        if (preg_match('/^v([0-9]+)$/i', $requested, $m)) {
+            $num = (int)$m[1];
+            $max = DocumentVersion::where('document_id', $document->id)
+                ->whereRaw("version_label REGEXP '^v[0-9]+'")
+                ->get()
+                ->pluck('version_label')
+                ->map(fn($v) => (int) preg_replace('/[^0-9]/', '', $v))
+                ->filter()
+                ->max();
+
+            $max = $max ?: 0;
+            if ($num > $max) {
+                return 'v' . $num;
+            } else {
+                // user requested an older/equal version number — force next to avoid collision
+                return 'v' . ($max + 1);
+            }
+        }
+
+        // non-standard requested label: append to next vN for safety, but keep user label as suffix
+        $next = $this->nextVersionLabelForDocument($document);
+        return $next;
     }
 }
