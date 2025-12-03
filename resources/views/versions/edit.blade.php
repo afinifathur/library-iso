@@ -17,7 +17,7 @@
 
     <div style="margin-bottom:10px;">
       <label>Replace file (optional)</label><br>
-      <input type="file" name="file" accept=".pdf,.doc,.docx">
+      <input type="file" name="file" accept=".pdf,.doc,.docx,.xls,.xlsx">
       @if($version->file_path)
         <div class="small-muted">Current file: {{ $version->file_path }}</div>
       @endif

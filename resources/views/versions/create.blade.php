@@ -17,7 +17,7 @@
 
     <div style="margin-bottom:10px;">
       <label>Upload file (PDF / DOCX) — optional if you paste text</label><br>
-      <input type="file" name="file" accept=".pdf,.doc,.docx">
+      <input type="file" name="file" accept=".pdf,.doc,.docx,.xls,.xlsx">
     </div>
 
     <div style="margin-bottom:10px;">

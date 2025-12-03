@@ -37,7 +37,7 @@ class DocumentVersionController extends Controller
         'document_id'   => ['required','integer','exists:documents,id'],
         'version_label' => ['nullable','string','max:50'],
         'file'          => ['required_without:pasted_text','nullable','file','mimes:pdf','max:51200'],
-        'master_file'   => ['nullable','file','mimes:doc,docx','max:102400'],
+        'master_file'   => ['nullable','file','mimes:doc,docx,xls,xlxs','max:102400'],
         'pasted_text'   => ['nullable','string','max:500000'],
         'action'        => ['nullable','in:draft,submit,publish'],
         'change_note'   => ['nullable','string','max:2000'],
@@ -156,7 +156,7 @@ class DocumentVersionController extends Controller
         $request->validate([
             'version_label' => ['required','string','max:50'],
             'file'          => ['nullable','file','mimes:pdf','max:51200'],
-            'master_file'   => ['nullable','file','mimes:doc,docx','max:102400'],
+            'master_file'   => ['nullable','file','mimes:doc,docx,xls,xlxs','max:102400'],
             'pasted_text'   => ['nullable','string','max:500000'],
             'change_note'   => ['nullable','string','max:2000'],
             'signed_by'     => ['nullable','string','max:191'],

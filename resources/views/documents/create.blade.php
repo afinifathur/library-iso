@@ -24,19 +24,7 @@
       - Di sini kita tambahkan dropdown jenis pengajuan (kontrol utama).
     --}}
 
-    {{-- Block dropdown wajib: letakkan di create view (kontrol utama) --}}
-    <div class="mb-4">
-      <label for="upload_type_top" class="block text-sm font-medium text-gray-700">Jenis Pengajuan <span class="text-red-500">*</span></label>
-      <select id="upload_type_top" name="upload_type_top" class="mt-1 block w-full rounded border p-2" required>
-        <option value="" selected>-- silahkan pilih jenis pengajuan (wajib) --</option>
-        <option value="new">Dokumen Baru</option>
-        <option value="replace">Ganti Versi Lama</option>
-      </select>
-      <p id="uploadTypeHelp" class="mt-2 text-sm text-gray-500">
-        Pilih <strong>Dokumen Baru</strong> untuk membuat baseline v1. Pilih <strong>Ganti Versi Lama</strong> untuk membuat versi baru sebagai draft.
-      </p>
-    </div>
-
+    
     {{-- include existing form partial (partial merender <form> dan field lain) --}}
     @include('documents._form', compact('action','method','departments','categories','submitLabel'))
 
