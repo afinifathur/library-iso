@@ -1,0 +1,9 @@
+## Deploy checklist (summary)
+- Merge these files into Laravel project.
+- Ensure `App\Console\Kernel.php` registers the import command (kernel.php -> $commands[])
+- Add route include in `routes/web.php`: `require base_path('routes/iso_documents.php');`
+- Ensure auth scaffold is present (Breeze / Jetstream) or remove auth middleware on routes for testing.
+- Set disk 'documents' in config/filesystems.php as shown.
+- Run `php artisan migrate` then `php artisan documents:import imports`.
+- Open /documents (login required).
+
