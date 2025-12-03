@@ -32,102 +32,109 @@ class DocumentVersionController extends Controller
      * Store new version (draft or publish if explicitly requested)
      * ------------------------ */
     public function store(Request $request)
-    {
-        $request->validate([
-            'document_id'   => ['required','integer','exists:documents,id'],
-            'version_label' => ['nullable','string','max:50'],
-            'file'          => ['required_without:pasted_text','nullable','file','mimes:pdf','max:51200'],
-            'master_file'   => ['nullable','file','mimes:doc,docx','max:102400'],
-            'pasted_text'   => ['nullable','string','max:500000'],
-            'action'        => ['nullable','in:draft,submit,publish'], // optional hint
-            'change_note'   => ['nullable','string','max:2000'],
-            'signed_by'     => ['nullable','string','max:191'],
-            'signed_at'     => ['nullable','date'],
-        ]);
+{
+    $request->validate([
+        'document_id'   => ['required','integer','exists:documents,id'],
+        'version_label' => ['nullable','string','max:50'],
+        'file'          => ['required_without:pasted_text','nullable','file','mimes:pdf','max:51200'],
+        'master_file'   => ['nullable','file','mimes:doc,docx','max:102400'],
+        'pasted_text'   => ['nullable','string','max:500000'],
+        'action'        => ['nullable','in:draft,submit,publish'],
+        'change_note'   => ['nullable','string','max:2000'],
+        'signed_by'     => ['nullable','string','max:191'],
+        'signed_at'     => ['nullable','date'],
+    ]);
 
-        $document = Document::findOrFail($request->input('document_id'));
-        $user = $request->user();
-        $disk = $this->getDisk();
+    $document = Document::findOrFail($request->input('document_id'));
+    $user = $request->user();
+    $disk = $this->getDisk();
 
-        // determine version label: auto-increment vN
-        $preferred = $request->input('version_label') ? trim($request->input('version_label')) : null;
-        $versionLabel = $this->normalizeVersionLabel($document, $preferred);
+    // determine version label
+    $preferred = $request->input('version_label') ? trim($request->input('version_label')) : null;
+    $versionLabel = $this->normalizeVersionLabel($document, $preferred);
 
-        // build folder: DOC_CODE/vN
-        $docCode = $document->doc_code ?: ('doc_'.$document->id);
-        $folder = trim($docCode . '/' . $versionLabel, '/');
+    // folder path
+    $docCode = $document->doc_code ?: ('doc_'.$document->id);
+    $folder = trim($docCode . '/' . $versionLabel, '/');
 
-        $pdf_path = null;
-        $file_mime = null;
-        $checksum = null;
-        $master_path = null;
+    $pdf_path = null;
+    $file_mime = null;
+    $checksum = null;
+    $master_path = null;
 
-        // save master (doc/docx) under {DOC_CODE}/{vN}/master/
-        if ($request->hasFile('master_file')) {
-            $master = $request->file('master_file');
-            $safe = $this->safeFilename($master->getClientOriginalName());
-            $masterName = now()->timestamp . '_master_' . Str::random(6) . '_' . $safe;
-            $master_path = trim($folder . '/master/' . $masterName, '/');
-            try { $disk->put($master_path, file_get_contents($master->getRealPath())); } catch (\Throwable) { $master_path = null; }
+    // master file
+    if ($request->hasFile('master_file')) {
+        $master = $request->file('master_file');
+        $safe = $this->safeFilename($master->getClientOriginalName());
+        $masterName = now()->timestamp . '_master_' . Str::random(6) . '_' . $safe;
+        $master_path = trim($folder . '/master/' . $masterName, '/');
+
+        try { 
+            $disk->put($master_path, file_get_contents($master->getRealPath())); 
+        } catch (\Throwable) { 
+            $master_path = null; 
         }
-
-        // save pdf under version folder
-        if ($request->hasFile('file')) {
-            $file = $request->file('file');
-            $safe = $this->safeFilename($file->getClientOriginalName());
-            $fileName = now()->timestamp . '_pdf_' . Str::random(6) . '_' . $safe;
-            $pdf_path = trim($folder . '/' . $fileName, '/');
-            try {
-                $content = file_get_contents($file->getRealPath());
-                $disk->put($pdf_path, $content);
-                $file_mime = $file->getClientMimeType() ?: 'application/pdf';
-                $checksum = hash('sha256', $content);
-            } catch (\Throwable) {
-                $pdf_path = null;
-                $file_mime = null;
-                $checksum = null;
-            }
-        }
-
-        // remove any previous draft by same user for same document (avoid dup)
-        DocumentVersion::where('document_id', $document->id)
-            ->where('created_by', $user->id)
-            ->whereIn('status', ['draft','rejected'])
-            ->delete();
-
-        // create version record (default draft)
-        $version = DocumentVersion::create([
-            'document_id'   => $document->id,
-            'version_label' => $versionLabel,
-            'status'        => 'draft',
-            'approval_stage'=> 'KABAG',
-            'created_by'    => $user->id ?? null,
-            'file_path'     => $pdf_path,    // keep file_path for backward compatibility
-            'pdf_path'      => $pdf_path,
-            'master_path'   => $master_path,
-            'file_mime'     => $file_mime,
-            'checksum'      => $checksum,
-            'change_note'   => $request->input('change_note') ?? null,
-            'plain_text'    => $request->input('pasted_text') ? trim($request->input('pasted_text')) : null,
-            'pasted_text'   => $request->input('pasted_text') ? trim($request->input('pasted_text')) : null,
-            'signed_by'     => $request->input('signed_by') ?? null,
-            'signed_at'     => $request->filled('signed_at') ? Carbon::parse($request->input('signed_at')) : null,
-        ]);
-
-        // If the user explicitly asked to publish (rare), allow publish when they have rights
-        if ($request->input('action') === 'publish' && $this->userHasAnyRole($user, ['director','admin'])) {
-            DB::transaction(function() use ($version, $user, $document) {
-                $version->update(['status'=>'approved','approval_stage'=>'DONE','approved_by'=>$user->id,'approved_at'=>now()]);
-                $document->update(['current_version_id'=>$version->id, 'revision_date'=>now()]);
-            });
-        }
-
-        $this->maybeAudit('version_created', $user->id ?? null, $document->id, $version->id, $request->ip(), [
-            'pdf' => $pdf_path, 'master' => $master_path, 'version' => $versionLabel
-        ]);
-
-        return redirect()->route('versions.show', $version)->with('success', 'Versi tersimpan sebagai draft.');
     }
+
+    // pdf file
+    if ($request->hasFile('file')) {
+        $file = $request->file('file');
+        $safe = $this->safeFilename($file->getClientOriginalName());
+        $fileName = now()->timestamp . '_pdf_' . Str::random(6) . '_' . $safe;
+        $pdf_path = trim($folder . '/' . $fileName, '/');
+
+        try {
+            $content = file_get_contents($file->getRealPath());
+            $disk->put($pdf_path, $content);
+            $file_mime = $file->getClientMimeType() ?: 'application/pdf';
+            $checksum = hash('sha256', $content);
+        } catch (\Throwable) {
+            $pdf_path = null;
+            $file_mime = null;
+            $checksum = null;
+        }
+    }
+
+    // remove previous draft
+    DocumentVersion::where('document_id', $document->id)
+        ->where('created_by', $user->id)
+        ->whereIn('status', ['draft','rejected'])
+        ->delete();
+
+    // create version
+    $version = DocumentVersion::create([
+        'document_id'   => $document->id,
+        'version_label' => $versionLabel,
+        'status'        => 'draft',
+        'approval_stage'=> 'KABAG',
+        'created_by'    => $user->id ?? null,
+        'file_path'     => $pdf_path,
+        'pdf_path'      => $pdf_path,
+        'master_path'   => $master_path,
+        'file_mime'     => $file_mime,
+        'checksum'      => $checksum,
+        'change_note'   => $request->input('change_note') ?? null,
+        'plain_text'    => $request->input('pasted_text') ? trim($request->input('pasted_text')) : null,
+        'pasted_text'   => $request->input('pasted_text') ? trim($request->input('pasted_text')) : null,
+        'signed_by'     => $request->input('signed_by') ?? null,
+        'signed_at'     => $request->filled('signed_at') ? Carbon::parse($request->input('signed_at')) : null,
+    ]);
+
+    // optional publish
+    if ($request->input('action') === 'publish' && $this->userHasAnyRole($user, ['director','admin'])) {
+        DB::transaction(function() use ($version, $user, $document) {
+            $version->update(['status'=>'approved','approval_stage'=>'DONE','approved_by'=>$user->id,'approved_at'=>now()]);
+            $document->update(['current_version_id'=>$version->id, 'revision_date'=>now()]);
+        });
+    }
+
+    $this->maybeAudit('version_created', $user->id ?? null, $document->id, $version->id, $request->ip(), [
+        'pdf' => $pdf_path, 'master' => $master_path, 'version' => $versionLabel
+    ]);
+
+    return redirect()->route('versions.show', $version)->with('success', 'Versi tersimpan sebagai draft.');
+}
+
 
     /* ------------------------
      * Edit form

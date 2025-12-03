@@ -57,7 +57,7 @@
                         {{-- Submit (POST) --}}
                         <form action="{{ route('drafts.submit', $v->id) }}" method="POST" style="display:inline">
                             @csrf
-                            <button class="btn" type="submit" onclick="return confirm('Submit ke MR?')">Submit</button>
+                            <button class="btn btn-warning" type="submit" onclick="return confirm('Submit ke MR?')">Submit</button>
                         </form>
 
                         {{-- Delete (keputusan: tetap POST supaya sesuai route yang ada) --}}

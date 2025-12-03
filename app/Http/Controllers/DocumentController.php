@@ -184,100 +184,76 @@ class DocumentController extends Controller
      * HANDLE: Create New Document (baseline or draft)
      * ------------------------- */
     protected function handleCreateNew(Request $request, $user, string $submit)
-    {
-        $categoryRule = class_exists(\App\Models\Category::class) ? 'required|integer|exists:categories,id' : 'nullable';
+{
+    $categoryRule = class_exists(\App\Models\Category::class) ? 'required|integer|exists:categories,id' : 'nullable';
 
-        $validated = $request->validate([
-            'doc_code'      => 'required|string|max:120|unique:documents,doc_code',
-            'title'         => 'required|string|max:255',
-            'category_id'   => $categoryRule,
-            'department_id' => 'required|integer|exists:departments,id',
-            'file'          => 'nullable|file|mimes:pdf|max:51200',
-            'master_file'   => 'nullable|file|mimes:doc,docx|max:102400',
-            'pasted_text'   => 'nullable|string',
-            'version_label' => 'nullable|string|max:50',
-            'change_note'   => 'nullable|string|max:2000',
-            'related_links' => 'nullable|string',
-        ]);
+    $validated = $request->validate([
+        'doc_code'      => 'required|string|max:120|unique:documents,doc_code',
+        'title'         => 'required|string|max:255',
+        'category_id'   => $categoryRule,
+        'department_id' => 'required|integer|exists:departments,id',
+        'file'          => 'nullable|file|mimes:pdf|max:51200',
+        'master_file'   => 'nullable|file|mimes:doc,docx|max:102400',
+        'pasted_text'   => 'nullable|string',
+        'version_label' => 'nullable|string|max:50',
+        'change_note'   => 'nullable|string|max:2000',
+        'related_links' => 'nullable|string',
+    ]);
 
-        $document = Document::create([
-            'doc_code'      => $validated['doc_code'],
-            'title'         => $validated['title'],
-            'department_id' => $validated['department_id'],
-            'category_id'   => $validated['category_id'] ?? null,
-        ]);
+    $document = Document::create([
+        'doc_code'      => $validated['doc_code'],
+        'title'         => $validated['title'],
+        'department_id' => $validated['department_id'],
+        'category_id'   => $validated['category_id'] ?? null,
+    ]);
 
-        if ($request->filled('related_links')) {
-            $document->related_links = $this->parseRelatedLinksInput($request->input('related_links'));
-            $document->save();
-        }
+    if ($request->filled('related_links')) {
+        $document->related_links = $this->parseRelatedLinksInput($request->input('related_links'));
+        $document->save();
+    }
 
-        $disk = $this->getDisk();
+    $disk = $this->getDisk();
 
-        // determine version label (auto v1)
-        $versionLabel = $validated['version_label'] ?? $this->nextVersionLabelForDocument($document);
+    // determine version label (auto v1)
+    $versionLabel = $validated['version_label'] ?? $this->nextVersionLabelForDocument($document);
 
-        $folder = trim($document->doc_code . '/' . $versionLabel, '/');
+    $folder = trim($document->doc_code . '/' . $versionLabel, '/');
 
-        $master_path = null;
-        if ($request->hasFile('master_file')) {
-            $master = $request->file('master_file');
-            $safe = $this->safeFilename($master->getClientOriginalName());
-            $master_name = now()->timestamp . '_master_' . Str::random(6) . '_' . $safe;
-            $master_path = trim($folder . '/master/' . $master_name, '/');
-            try { $disk->put($master_path, file_get_contents($master->getRealPath())); } catch (\Throwable) { /* ignore */ }
-        }
+    $master_path = null;
+    if ($request->hasFile('master_file')) {
+        $master = $request->file('master_file');
+        $safe = $this->safeFilename($master->getClientOriginalName());
+        $master_name = now()->timestamp . '_master_' . Str::random(6) . '_' . $safe;
+        $master_path = trim($folder . '/master/' . $master_name, '/');
+        try { 
+            $disk->put($master_path, file_get_contents($master->getRealPath())); 
+        } catch (\Throwable) { }
+    }
 
-        $pdf_path = null;
-        $file_mime = null;
-        $checksum = null;
-        if ($request->hasFile('file')) {
-            $file = $request->file('file');
-            $safe = $this->safeFilename($file->getClientOriginalName());
-            $name = now()->timestamp . '_pdf_' . Str::random(6) . '_' . $safe;
-            $pdf_path = trim($folder . '/' . $name, '/');
-            $content = file_get_contents($file->getRealPath());
-            try { $disk->put($pdf_path, $content); } catch (\Throwable) { /* ignore */ }
-            $file_mime = $file->getClientMimeType() ?: 'application/pdf';
-            $checksum = hash('sha256', $content);
-        }
+    $pdf_path = null;
+    $file_mime = null;
+    $checksum = null;
+    if ($request->hasFile('file')) {
+        $file = $request->file('file');
+        $safe = $this->safeFilename($file->getClientOriginalName());
+        $name = now()->timestamp . '_pdf_' . Str::random(6) . '_' . $safe;
+        $pdf_path = trim($folder . '/' . $name, '/');
+        $content = file_get_contents($file->getRealPath());
 
-        // If submit === 'publish' then baseline approved immediately
-        if ($submit === 'publish') {
-            $version = DocumentVersion::create([
-                'document_id'   => $document->id,
-                'version_label' => $versionLabel,
-                'status'        => 'approved',
-                'approval_stage'=> 'DONE',
-                'pdf_path'      => $pdf_path,
-                'file_path'     => $pdf_path, // backward compatibility: file_path points to latest pdf
-                'master_path'   => $master_path,
-                'file_mime'     => $file_mime,
-                'checksum'      => $checksum,
-                'change_note'   => $validated['change_note'] ?? null,
-                'plain_text'    => $request->input('pasted_text') ?? null,
-                'created_by'    => $user->id ?? null,
-                'approved_by'   => $user->id ?? null,
-                'approved_at'   => now(),
-            ]);
+        try { 
+            $disk->put($pdf_path, $content); 
+        } catch (\Throwable) { }
 
-            $document->update([
-                'current_version_id' => $version->id,
-                'revision_number'    => 1,
-                'revision_date'      => now(),
-            ]);
+        $file_mime = $file->getClientMimeType() ?: 'application/pdf';
+        $checksum = hash('sha256', $content);
+    }
 
-            $this->maybeAudit('create_baseline_publish', $user->id, $document->id, $version->id, $request->ip());
-
-            return redirect()->route('documents.show', $document->id)->with('success', 'Baseline uploaded and published.');
-        }
-
-        // Save as draft
+    if ($submit === 'publish') {
         $version = DocumentVersion::create([
             'document_id'   => $document->id,
             'version_label' => $versionLabel,
-            'status'        => 'draft',
-            'approval_stage'=> 'KABAG',
+            'status'        => 'approved',
+            'approval_stage'=> 'DONE',
             'pdf_path'      => $pdf_path,
             'file_path'     => $pdf_path,
             'master_path'   => $master_path,
@@ -286,12 +262,43 @@ class DocumentController extends Controller
             'change_note'   => $validated['change_note'] ?? null,
             'plain_text'    => $request->input('pasted_text') ?? null,
             'created_by'    => $user->id ?? null,
+            'approved_by'   => $user->id ?? null,
+            'approved_at'   => now(),
         ]);
 
-        $this->maybeAudit('create_baseline_draft', $user->id, $document->id, $version->id, $request->ip());
+        $document->update([
+            'current_version_id' => $version->id,
+            'revision_number'    => 1,
+            'revision_date'      => now(),
+        ]);
 
-        return redirect()->route('drafts.index')->with('success', 'Baseline created as draft.');
+        $this->maybeAudit('create_baseline_publish', $user->id, $document->id, $version->id, $request->ip());
+
+        return redirect()->route('documents.show', $document->id)->with('success', 'Baseline uploaded and published.');
     }
+
+    // Save as draft
+    $version = DocumentVersion::create([
+        'document_id'   => $document->id,
+        'version_label' => $versionLabel,
+        'status'        => 'draft',
+        'approval_stage'=> 'KABAG',
+        'pdf_path'      => $pdf_path,
+        'file_path'     => $pdf_path,
+        'master_path'   => $master_path,
+        'file_mime'     => $file_mime,
+        'checksum'      => $checksum,
+        'change_note'   => $validated['change_note'] ?? null,
+        'plain_text'    => $request->input('pasted_text') ?? null,
+        'created_by'    => $user->id ?? null,
+    ]);
+
+    $this->maybeAudit('create_baseline_draft', $user->id, $document->id, $version->id, $request->ip());
+
+    return redirect()->route('drafts.index')->with('success', 'Baseline created as draft.');
+}
+
+
 
     /* -------------------------
      * UPDATE COMBINED (metadata + version)

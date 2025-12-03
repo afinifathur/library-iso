@@ -479,6 +479,27 @@ nav .flex svg,
     width: 32px !important;
     height: 32px !important;
 }
+.btn-warning {
+    background-color: #f59e0b !important; /* orange */
+    color: white !important;
+    border: none;
+    padding: 8px 14px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: 600;
+}
+
+.btn-warning:hover {
+    background-color: #d97706 !important;
+}
+
+#upload_type_top {
+    display: none !important;
+}
+#upload_type_top + p,
+label[for="upload_type_top"] {
+    display: none !important;
+}
 
 /* ---------- LEGACY / OLDER BROWSER NOTES ----------
    - CSS variables are used; for very old browsers that do not support them, values will fall back

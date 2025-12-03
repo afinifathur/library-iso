@@ -11,13 +11,14 @@ use Carbon\Carbon;
 class DocumentVersion extends Model
 {
     protected $fillable = [
-        'document_id','version_label','status','approval_stage','created_by',
-        'file_path','file_mime','checksum','change_note','signed_by','signed_at',
-        'plain_text','pasted_text','diff_summary','summary_changed','prev_version_id',
-        'approval_note','approval_notes','approved_by','approved_at',
-        'rejected_by','rejected_at','reject_reason','rejected_reason',
-        'submitted_by','submitted_at'
-    ];
+    'document_id','version_label','status','approval_stage','created_by',
+    'file_path','pdf_path','master_path','file_mime','checksum',
+    'change_note','signed_by','signed_at',
+    'plain_text','pasted_text','diff_summary','summary_changed','prev_version_id',
+    'approval_note','approval_notes','approved_by','approved_at',
+    'rejected_by','rejected_at','reject_reason','rejected_reason',
+    'submitted_by','submitted_at'
+];
 
     protected $casts = [
         'signed_at'     => 'datetime',
