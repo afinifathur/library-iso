@@ -184,7 +184,7 @@
 
     {{-- PASTED TEXT --}}
     <div class="form-row">
-        <label class="small-muted">Pasted text (optional)</label>
+        <label class="small-muted">Tolong Copy paste kan isi dokumen disini (wajib)</label>
         @php
             $pastedDefault = old('pasted_text', isset($document) ? optional($document->relationLoaded('currentVersion') ? $document->currentVersion : ($document->currentVersion ?? null))->pasted_text ?? '' : '');
         @endphp
@@ -198,7 +198,7 @@
 
     {{-- CHANGE NOTE --}}
     <div class="form-row">
-        <label class="small-muted">Change note (optional)</label>
+        <label class="small-muted">Catatan apa yang dirubah diversi ini (optional)</label>
         <textarea name="change_note"
                   rows="3"
                   class="form-textarea">{{ old('change_note') }}</textarea>

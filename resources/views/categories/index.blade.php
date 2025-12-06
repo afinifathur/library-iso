@@ -36,7 +36,20 @@
                             <span class="badge badge-warning">{{ $cat->in_progress_count ?? 0 }}</span>
                         </td>
                         <td>
-                            <a href="{{ route('documents.index', ['category' => $cat->id]) }}" class="btn-muted">Buka Dokumen</a>
+                            <a href="{{ url('documents') . '?search=' . urlencode($cat->code . '.') }}" style="
+        display:inline-block;
+        padding:6px 18px;
+        background:#1d4ed8;
+        color:#ffffff;
+        border-radius:999px;
+        font-weight:500;
+        text-decoration:none;
+        font-size:0.88rem;
+        border:1px solid #1d4ed8;
+        transition:0.15s;
+    "
+    onmouseover="this.style.background='#1e40af'"
+    onmouseout="this.style.background='#1d4ed8'">Buka Dokumen</a>
                         </td>
                     </tr>
                     @empty
