@@ -166,6 +166,14 @@
     } catch (\Throwable $e) {
         $categories = collect();
     }
+
+    // permission: canDownload (everyone EXCEPT viewer)
+    $canDownload = true;
+    if ($user) {
+        try {
+            if (method_exists($user, 'hasRole') && $user->hasRole('viewer')) $canDownload = false;
+        } catch (\Throwable $e) { /* ignore */ }
+    }
 @endphp
 
 <div class="app-container" style="max-width:1200px;margin:18px auto;">
@@ -193,16 +201,18 @@
         @endif
 
         {{-- Download master --}}
-        @if($currentVersion && $masterAvailable && Route::has('documents.versions.downloadMaster'))
-          <a class="btn" href="{{ route('documents.versions.downloadMaster', $currentVersion->id) }}">Download master</a>
-        @elseif($currentVersion && Route::has('documents.versions.download') && $currentVersion->file_path)
-          <a class="btn" href="{{ route('documents.versions.download', $currentVersion->id) }}">Download file</a>
-        @else
-          <button class="btn-muted" type="button" disabled>Download master</button>
+        @if($canDownload)
+          @if($currentVersion && $masterAvailable && Route::has('documents.versions.downloadMaster'))
+            <a class="btn" href="{{ route('documents.versions.downloadMaster', $currentVersion->id) }}">Download master</a>
+          @elseif($currentVersion && Route::has('documents.versions.download') && $currentVersion->file_path)
+            <a class="btn" href="{{ route('documents.versions.download', $currentVersion->id) }}">Download file</a>
+          @else
+            <button class="btn-muted" type="button" disabled>Download master</button>
+          @endif
         @endif
 
         {{-- Download PDF separate button (if available) --}}
-        @if($currentVersion && $currentVersion->file_path && Route::has('documents.versions.download'))
+        @if($canDownload && $currentVersion && $currentVersion->file_path && Route::has('documents.versions.download'))
           <a class="btn" href="{{ route('documents.versions.download', $currentVersion->id) }}">Download PDF</a>
         @endif
 
@@ -241,9 +251,11 @@
               <span id="pdfZoomPct" class="small-muted" style="margin-left:6px;">100%</span>
             </div>
             <div style="display:flex;gap:8px;">
-              <a id="pdfOpenNew" href="{{ $pdfUrl }}" target="_blank" rel="noopener noreferrer" class="btn-small">Open in new tab</a>
-              @if(Route::has('documents.versions.download'))
-                <a id="pdfDownload" href="{{ route('documents.versions.download', optional($currentVersion)->id) }}" class="btn-small" style="margin-left:6px;">Download</a>
+              @if($canDownload)
+                <a id="pdfOpenNew" href="{{ $pdfUrl }}" target="_blank" rel="noopener noreferrer" class="btn-small">Open in new tab</a>
+                @if(Route::has('documents.versions.download'))
+                  <a id="pdfDownload" href="{{ route('documents.versions.download', optional($currentVersion)->id) }}" class="btn-small" style="margin-left:6px;">Download</a>
+                @endif
               @endif
               <button id="pdfClose" type="button" class="btn-small" style="margin-left:6px;">Close</button>
             </div>
@@ -279,7 +291,7 @@
         @elseif($currentVersion && $currentVersion->file_path && ! $pdfAvailable)
           <div>
             File attached.
-            @if(Route::has('documents.versions.download'))
+            @if($canDownload && Route::has('documents.versions.download'))
               <a href="{{ route('documents.versions.download', $currentVersion->id) }}">Download</a> to view.
             @endif
           </div>
@@ -322,7 +334,11 @@
                   @endif
 
                   @if($ver->file_path && Route::has('documents.versions.download'))
-                    <a class="btn-small btn-muted" href="{{ route('documents.versions.download', $ver->id) }}">DL</a>
+                    @if($canDownload)
+                      <a class="btn-small btn-muted" href="{{ route('documents.versions.download', $ver->id) }}">DL</a>
+                    @else
+                      <span class="btn-small btn-muted" style="opacity:.6;">File available</span>
+                    @endif
                   @else
                     <span class="btn-small btn-muted" style="opacity:.6;">No file</span>
                   @endif
