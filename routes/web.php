@@ -10,6 +10,8 @@ use App\Http\Controllers\DocumentVersionController;
 use App\Http\Controllers\DraftController;
 use App\Http\Controllers\CategoryController;
 use App\Http\Controllers\RecycleController;
+use App\Http\Controllers\AuditLogController;
+use App\Http\Controllers\RevisionHistoryController;
 
 /*
 |--------------------------------------------------------------------------
@@ -198,6 +200,10 @@ Route::middleware('auth')->group(function () {
         Route::post('{version}/destroy',         [RecycleController::class, 'destroy'])
             ->whereNumber('version')->name('destroy.post');
     });
+
+    // Audit & History
+    Route::get('/audit-log', [AuditLogController::class, 'index'])->name('audit.index');
+    Route::get('/revision-history', [RevisionHistoryController::class, 'index'])->name('revision.index');
 });
 
 /*

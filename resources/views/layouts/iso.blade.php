@@ -145,7 +145,7 @@
 
     {{-- Audit Log — ONLY MR & DIRECTOR --}}
     @auth
-        @if(auth()->user()->hasAnyRole(['mr','director']))
+        @if(auth()->user()->hasAnyRole(['mr','director']) && Route::has('audit.index'))
             <a href="{{ route('audit.index') }}"
                class="{{ request()->routeIs('audit.*') ? 'active' : '' }}">
                Audit Log
@@ -155,7 +155,7 @@
 
     {{-- Drafts — kabag, admin, mr, director --}}
     @auth
-        @if(auth()->user()->hasAnyRole(['kabag','admin','mr','director']))
+        @if(auth()->user()->hasAnyRole(['kabag','admin','mr','director']) && Route::has('drafts.index'))
             <a href="{{ route('drafts.index') }}"
                class="{{ request()->routeIs('drafts.*') ? 'active' : '' }}">
                Drafts
@@ -165,7 +165,7 @@
 
     {{-- Approval Queue — ONLY MR & DIRECTOR --}}
     @auth
-        @if(auth()->user()->hasAnyRole(['mr','director']))
+        @if(auth()->user()->hasAnyRole(['mr','director']) && Route::has('approval.index'))
             <a href="{{ route('approval.index') }}"
                class="{{ request()->routeIs('approval.*') ? 'active' : '' }}">
                Approval Queue
