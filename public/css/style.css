@@ -36,6 +36,7 @@
 /* If environment has no Internet, delete or comment out the @import line.
    Fallback will use system fonts specified on body. */
 @import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&display=swap");
 
 /* ---------- GLOBAL ---------- */
 * {
