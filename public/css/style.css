@@ -407,7 +407,7 @@ a,
 
 /* ---------- SECTION HEADINGS ---------- */
 .section-title {
-    color: #0b66ff;
+    color: var(--primary);
     font-weight: 700;
     margin-bottom: 10px;
     font-size: 16px;
@@ -415,7 +415,7 @@ a,
 
 /* ---------- HIGHLIGHT BOX HEADERS ---------- */
 .card-section h4 {
-    color: #0b66ff;
+    color: var(--primary);
     font-weight: 700;
     font-size: 15px;
     margin-bottom: 8px;
@@ -428,19 +428,29 @@ a,
 .bg-warning-subtle {
     background: #fff4cc;
 }
+.btn-primary {
+    background: var(--primary);
+    border-color: var(--primary);
+    color: #fff;
+    border: none;
+}
+.btn-primary:hover {
+    background: #003aa0;
+    border-color: #003aa0;
+}
 .btn-success {
     background: #16a34a; /* hijau */
     color: #fff;
     border: none;
 }
 .btn-danger {
-    background: #ef4444; /* merah */
+    background: var(--error);
     color: #fff;
     border: none;
 }
 .btn-outline-primary {
-    border: 1px solid #1e88ff;
-    color: #1e88ff;
+    border: 1px solid var(--primary);
+    color: var(--primary);
     background: transparent;
 }
 .btn-outline-secondary {
