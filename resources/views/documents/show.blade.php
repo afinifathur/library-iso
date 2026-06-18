@@ -97,6 +97,7 @@
     $pdfUrl = null;
 
     if ($currentVersion) {
+        // master candidates: prefer explicit master_path, then file_path (some legacy rows)
         $masterCandidates = [
             $currentVersion->master_path ?? null,
             $currentVersion->file_path ?? null,
@@ -104,8 +105,8 @@
             $document->file_path ?? null,
         ];
         $pdfCandidates = [
-            $currentVersion->file_path ?? null,
             $currentVersion->pdf_path ?? null,
+            $currentVersion->file_path ?? null,
         ];
 
         foreach ($masterCandidates as $p) {
@@ -743,10 +744,18 @@
           <input id="version_label" name="version_label" value="{{ old('version_label', optional($currentVersion)->version_label ?? 'v1') }}" class="input" required>
 
           {{-- Master file --}}
-          <label for="master_file" style="margin-top:8px">Master file (.doc/.docx) — opsional</label>
-          <input id="master_file" type="file" name="master_file" accept=".doc,.docx" class="input">
-          @if(optional($currentVersion)->file_path && Str::endsWith(strtolower(optional($currentVersion)->file_path), '.docx') )
-            <div class="small-muted" style="margin-top:6px;">Master saat ini: {{ basename(optional($currentVersion)->file_path) }}</div>
+          <label for="master_file" style="margin-top:8px">Master file (.doc/.docx/.xls/.xlsx) — opsional</label>
+          <input id="master_file" type="file" name="master_file" accept=".doc,.docx,.xls,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" class="input">
+
+          @php
+            // show current master if available (consider master_path first then file_path legacy)
+            $currMasterPath = optional($currentVersion)->master_path ?: optional($currentVersion)->file_path ?: '';
+            $currMasterExt = $currMasterPath ? strtolower(pathinfo($currMasterPath, PATHINFO_EXTENSION)) : '';
+            $masterAllowedExt = ['doc','docx','xls','xlsx'];
+          @endphp
+
+          @if($currMasterPath && in_array($currMasterExt, $masterAllowedExt, true))
+            <div class="small-muted" style="margin-top:6px;">Master saat ini: {{ basename($currMasterPath) }}</div>
           @endif
 
           {{-- PDF file --}}
@@ -801,6 +810,7 @@
   .input{ width:100%;padding:8px;border-radius:6px;border:1px solid #e6eef8;margin-top:6px;box-sizing:border-box; }
   .small-muted{ color:#6b7280; font-size:.95rem; }
   #pdfIframe { transition: transform .12s ease; }
+  .btn:disabled, button[disabled] { opacity: 0.6; cursor: progress; }
 </style>
 @endsection {{-- end content --}}
 
@@ -824,16 +834,18 @@
       }
     } catch (e) { /* ignore */ }
 
-    // prevent double submit
+    // prevent double submit for modal form
     try {
       var editForm = modal ? modal.querySelector('form') : null;
       if (editForm) {
-        editForm.addEventListener('submit', function () {
+        editForm.addEventListener('submit', function (ev) {
+          // disable all submit buttons to avoid double-clicks
           Array.from(editForm.querySelectorAll('button[type="submit"]')).forEach(function(b){
             b.disabled = true;
             b.dataset.origText = b.textContent;
             b.textContent = 'Processing...';
           });
+          // allow submit to proceed
         });
       }
     } catch (e) { /* ignore */ }

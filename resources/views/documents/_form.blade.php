@@ -135,7 +135,7 @@
         <input type="file"
                name="master_file"
                class="form-input"
-               accept=".doc,.docx,.xls,.xlxs"
+               accept=".doc,.docx,.xls,.xlsx"
                {{ empty($document) ? 'required' : '' }}>
 
         @if(!empty($document))

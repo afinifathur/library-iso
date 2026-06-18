@@ -1,0 +1,53 @@
+services:
+  app:
+    build:
+      context: .
+      args:
+        user: laravel
+        uid: 1000
+    image: library-iso-app
+    container_name: library-iso-app
+    restart: unless-stopped
+    working_dir: /var/www
+    volumes:
+      - ./:/var/www
+    networks:
+      - library-iso-network
+
+  db:
+    image: mysql:8.0
+    container_name: library-iso-db
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: ${DB_DATABASE}
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD}
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+      MYSQL_USER: ${DB_USERNAME}
+      SERVICE_TAGS: dev
+      SERVICE_NAME: mysql
+    volumes:
+      - dbdata:/var/lib/mysql
+    networks:
+      - library-iso-network
+
+  web:
+    image: nginx:alpine
+    container_name: library-iso-web
+    restart: unless-stopped
+    ports:
+      - "6003:80"
+    volumes:
+      - ./:/var/www
+      - ./docker/nginx/conf.d:/etc/nginx/conf.d
+    depends_on:
+      - app
+    networks:
+      - library-iso-network
+
+networks:
+  library-iso-network:
+    driver: bridge
+
+volumes:
+  dbdata:
+    driver: local
