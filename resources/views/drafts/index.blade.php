@@ -1,5 +1,5 @@
 {{-- resources/views/drafts/index.blade.php --}}
-@extends('layouts.app')
+@extends('layouts.iso')
 
 @section('title', 'Drafts')
 

@@ -1,5 +1,5 @@
 {{-- resources/views/recycle/index.blade.php --}}
-@extends('layouts.app')
+@extends('layouts.iso')
 
 @section('title', 'Recycle Bin')
 
