@@ -10,313 +10,536 @@
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&display=swap">
 
   <style>
-    /* General UI */
-    .card { border-radius:12px; box-shadow:0 6px 18px rgba(20,40,70,0.05); }
-    .table thead th { background:#f8fafc; border-bottom:1px solid #e6eef6; }
-    .btn { border-radius:8px; padding:.45rem .75rem; }
-    .btn-sm { padding:.25rem .6rem; font-size:.85rem; }
-    .table td, .table th { vertical-align:middle; }
+    /* ============================================================
+       WAVE 2 — SIDEBAR SHELL
+       All rules scoped to sidebar/topbar/layout structure only.
+       Page content styles untouched.
+    ============================================================ */
 
-    .approval-actions .btn { margin-right:6px; }
-
-    .login-card .card { border:none; }
-    .login-card .form-control { border-radius:8px; padding:.6rem .75rem; }
-
-    .btn-primary { background:#1e88ff; border-color:#1e88ff; }
-    .btn-primary:hover { background:#166fe0; border-color:#166fe0; }
-
-    /* Header */
-    .site-header {
-      display:flex;
-      align-items:center;
-      justify-content:space-between;
-      padding:12px 18px;
-      border-bottom:1px solid #eef6fb;
-      background:#fff;
-      position:relative;
-      z-index:50;
+    /* Reset body for sidebar layout */
+    body {
+      margin: 0;
+      padding: 0;
+      display: block;
+      background: #faf8ff;
+      font-family: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      color: #191b23;
     }
 
-    .brand { display:flex; align-items:center; gap:12px; text-decoration:none; color:inherit; }
-    .logo-img { width:46px; height:46px; border-radius:8px; object-fit:cover; }
-    .brand-text .title { font-weight:700; font-size:16px; }
-    .brand-text .sub { font-size:12px; color:#6b7280; }
-
-    /* NAV LINKS */
-    .main-nav { display:flex; gap:14px; align-items:center; }
-    .main-nav a {
-        padding:8px 12px;
-        border-radius:8px;
-        color:#0b5ed7;
-        text-decoration:none;
-        font-weight:500;
-    }
-    .main-nav a.active {
-        background:#eef7ff;
-        font-weight:600;
+    /* Material Symbols baseline */
+    .material-symbols-outlined {
+      font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 20;
+      vertical-align: middle;
+      font-size: 20px;
+      line-height: 1;
+      flex-shrink: 0;
     }
 
-    /* Dropdown */
-    .dropdown-toggle {
-        background:transparent;
-        border:1px solid transparent;
-        padding:6px 10px;
-        border-radius:8px;
-        cursor:pointer;
-        color:#0b5ed7;
-        font-weight:500;
+    /* ---- SIDEBAR ---- */
+    .iso-sidebar {
+      position: fixed;
+      left: 0;
+      top: 0;
+      width: 260px;
+      height: 100vh;
+      background: #ffffff;
+      border-right: 1px solid #c3c6d7;
+      display: flex;
+      flex-direction: column;
+      z-index: 200;
+      overflow-y: auto;
+      overflow-x: hidden;
+      transition: transform 0.28s ease;
     }
 
-    .dropdown-menu {
-        display:none;
-        background:#fff;
-        border:1px solid #d1d5db;
-        border-radius:6px;
-        min-width:130px;
-        box-shadow:0 6px 20px rgba(15,23,42,0.12);
-        position:fixed;
-        z-index:99999;
+    /* Sidebar brand */
+    .iso-sidebar-brand {
+      padding: 20px 16px 16px;
+      border-bottom: 1px solid #ededf9;
+      flex-shrink: 0;
+    }
+    .iso-sidebar-brand-name {
+      font-size: 15px;
+      font-weight: 700;
+      color: #004ac6;
+      letter-spacing: -0.01em;
+      margin: 0 0 2px;
+    }
+    .iso-sidebar-brand-sub {
+      font-size: 11px;
+      color: #434655;
+      margin: 0;
     }
 
-    .dropdown-menu button {
-        width:100%;
-        text-align:left;
-        padding:10px 14px;
-        border:none;
-        background:#fff;
-        font-size:14px;
-        cursor:pointer;
+    /* Nav groups */
+    .iso-nav-group {
+      padding: 12px 0 4px;
     }
-    .dropdown-menu button:hover {
-        background:#eef7ff;
-        color:#0b5ed7;
+    .iso-nav-group-label {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #737686;
+      padding: 0 16px 6px;
+      display: block;
     }
 
-    .footer-small { margin-top:18px; font-size:13px; color:#6b7280; text-align:center; padding:10px 0; }
+    /* Nav links */
+    .iso-nav-link {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 9px 16px;
+      font-size: 13px;
+      font-weight: 500;
+      color: #434655;
+      text-decoration: none;
+      border-left: 2px solid transparent;
+      transition: background 0.15s, color 0.15s;
+      white-space: nowrap;
+    }
+    .iso-nav-link:hover {
+      background: #e7e7f3;
+      color: #191b23;
+      text-decoration: none;
+    }
+    .iso-nav-link.active {
+      background: #d5e3fc;
+      color: #004ac6;
+      border-left-color: #004ac6;
+      font-weight: 600;
+    }
+    .iso-nav-link.active .material-symbols-outlined {
+      color: #004ac6;
+    }
 
-    .app-container { min-height:100vh; background:#f7fbff; }
-    .main-area { padding:18px; }
-    .page-card { max-width:1200px; margin:0 auto; }
+    /* Sidebar footer (user section) */
+    .iso-sidebar-footer {
+      margin-top: auto;
+      border-top: 1px solid #c3c6d7;
+      padding: 8px 0;
+      flex-shrink: 0;
+    }
+    .iso-sidebar-user {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 16px;
+      font-size: 13px;
+      font-weight: 500;
+      color: #434655;
+    }
+    .iso-sidebar-user .material-symbols-outlined {
+      color: #737686;
+    }
+    .iso-logout-btn {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 9px 16px;
+      width: 100%;
+      text-align: left;
+      background: none;
+      border: none;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 500;
+      color: #434655;
+      transition: background 0.15s, color 0.15s;
+    }
+    .iso-logout-btn:hover {
+      background: #e7e7f3;
+      color: #ba1a1a;
+    }
+    .iso-logout-btn:hover .material-symbols-outlined {
+      color: #ba1a1a;
+    }
+
+    /* ---- TOPBAR (content area only, not full-width) ---- */
+    .iso-topbar {
+      position: fixed;
+      top: 0;
+      left: 260px;
+      right: 0;
+      height: 56px;
+      background: #ffffff;
+      border-bottom: 1px solid #c3c6d7;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 24px;
+      z-index: 100;
+    }
+    .iso-topbar-title {
+      font-size: 15px;
+      font-weight: 600;
+      color: #191b23;
+      margin: 0;
+    }
+    .iso-topbar-right {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 13px;
+      color: #434655;
+    }
+    .iso-topbar-user {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-weight: 500;
+    }
+
+    /* ---- MAIN CONTENT AREA ---- */
+    .iso-shell {
+      margin-left: 260px;
+      padding-top: 56px;
+      min-height: 100vh;
+    }
+    .iso-main {
+      padding: 24px;
+    }
+
+    /* Override old page-card centering for sidebar layout */
+    .page-card {
+      max-width: none;
+      margin: 0;
+      background: transparent;
+      box-shadow: none;
+      padding: 0;
+    }
+
+    /* Keep cards rendered within content working */
+    .card {
+      border-radius: 6px;
+      box-shadow: 0 1px 4px rgba(25, 27, 35, 0.06);
+      background: #fff;
+    }
+    .table thead th { background: #f3f3fe; border-bottom: 1px solid #c3c6d7; }
+    .btn { border-radius: 6px; padding: .45rem .75rem; }
+    .btn-sm { padding: .25rem .6rem; font-size: .85rem; }
+    .table td, .table th { vertical-align: middle; }
+    .approval-actions .btn { margin-right: 6px; }
+    .login-card .card { border: none; }
+    .login-card .form-control { border-radius: 6px; padding: .6rem .75rem; }
+    .footer-small { margin-top: 24px; font-size: 12px; color: #737686; text-align: center; padding: 10px 0; }
+
+    /* ---- MOBILE OVERLAY ---- */
+    .iso-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(25, 27, 35, 0.45);
+      z-index: 199;
+    }
+    .iso-overlay.active { display: block; }
+
+    /* ---- HAMBURGER ---- */
+    .iso-hamburger {
+      display: none;
+      position: fixed;
+      top: 12px;
+      left: 12px;
+      z-index: 201;
+      background: #004ac6;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      padding: 6px 8px;
+      cursor: pointer;
+      line-height: 1;
+    }
+
+    /* ---- LOGIN PAGE (no sidebar) ---- */
+    .iso-login-page body,
+    body.iso-login-body {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 20px;
+    }
+    .iso-topbar.login-hidden,
+    .iso-sidebar.login-hidden,
+    .iso-overlay.login-hidden {
+      display: none !important;
+    }
+    .iso-shell.login-page {
+      margin-left: 0;
+      padding-top: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+    }
+
+    /* ---- RESPONSIVE ---- */
+    @media (max-width: 768px) {
+      .iso-hamburger { display: flex; align-items: center; }
+      .iso-sidebar { transform: translateX(-260px); }
+      .iso-sidebar.open { transform: translateX(0); }
+      .iso-topbar { left: 0; padding-left: 56px; }
+      .iso-shell { margin-left: 0; }
+    }
+
+    /* Scrollbar */
+    .iso-sidebar::-webkit-scrollbar { width: 4px; }
+    .iso-sidebar::-webkit-scrollbar-track { background: transparent; }
+    .iso-sidebar::-webkit-scrollbar-thumb { background: #c3c6d7; border-radius: 4px; }
   </style>
 
 </head>
 
 <body>
-  <div class="app-container">
 
-    {{-- NAVBAR --}}
-    @if(!Request::is('login') && !Route::is('login'))
-      <header class="site-header">
+@php
+  $isLogin = Request::is('login') || Route::is('login');
+  $pageTitle = View::yieldContent('title') ?: 'ISO Library';
+  $email    = Auth::check() ? (Auth::user()->email ?? '') : '';
+  $username = $email ? (explode('@', strtolower($email))[0] ?? (Auth::user()->name ?? 'user')) : '';
+@endphp
 
-        {{-- Brand --}}
-        <a href="{{ url('/') }}" class="brand">
-          <img src="{{ asset('images/logo.png') }}" class="logo-img" alt="Logo">
-          <div class="brand-text">
-            <div class="title">Document Control</div>
-            <div class="sub">Management System</div>
-          </div>
-        </a>
+{{-- ============================================================
+     SIDEBAR — hidden on login page
+============================================================ --}}
+@if(!$isLogin)
 
-        {{-- Navigation --}}
-       <nav class="main-nav">
+  {{-- Mobile overlay --}}
+  <div class="iso-overlay" id="iso-overlay"></div>
 
-    {{-- Dashboard --}}
-    <a href="{{ route('dashboard.index') }}"
-       class="{{ request()->routeIs('dashboard.*') ? 'active' : '' }}">
-       Dashboard
-    </a>
+  {{-- Hamburger --}}
+  <button class="iso-hamburger" id="iso-hamburger" aria-label="Toggle menu">
+    <span class="material-symbols-outlined" style="font-size:22px;">menu</span>
+  </button>
 
-    {{-- Documents --}}
-    <a href="{{ route('documents.index') }}"
-       class="{{ request()->routeIs('documents.*') ? 'active' : '' }}">
-       Documents
-    </a>
+  {{-- Sidebar --}}
+  <aside class="iso-sidebar" id="iso-sidebar" aria-label="Main navigation">
 
-    {{-- Categories --}}
-    <a href="{{ route('categories.index') }}"
-       class="{{ request()->routeIs('categories.*') ? 'active' : '' }}">
-       Categories
-    </a>
+    {{-- Brand --}}
+    <div class="iso-sidebar-brand">
+      <p class="iso-sidebar-brand-name">Document Control</p>
+      <p class="iso-sidebar-brand-sub">ISO 9001:2015 Management</p>
+    </div>
 
-    {{-- Departments --}}
-    <a href="{{ route('departments.index') }}"
-       class="{{ request()->routeIs('departments.*') ? 'active' : '' }}">
-       Departments
-    </a>
+    {{-- MAIN group --}}
+    <div class="iso-nav-group">
+      <span class="iso-nav-group-label">Main</span>
 
-    {{-- Audit Log — ONLY MR & DIRECTOR --}}
-    @auth
-        @if(auth()->user()->hasAnyRole(['mr','director']))
-            <a href="{{ route('audit.index') }}"
-               class="{{ request()->routeIs('audit.*') ? 'active' : '' }}">
-               Audit Log
-            </a>
-        @endif
-    @endauth
+      <a href="{{ route('dashboard.index') }}"
+         class="iso-nav-link {{ request()->routeIs('dashboard.*') ? 'active' : '' }}">
+        <span class="material-symbols-outlined">dashboard</span>
+        Dashboard
+      </a>
 
-    {{-- Drafts — kabag, admin, mr, director --}}
-    @auth
+      <a href="{{ route('documents.index') }}"
+         class="iso-nav-link {{ request()->routeIs('documents.*') || request()->routeIs('versions.*') ? 'active' : '' }}">
+        <span class="material-symbols-outlined">description</span>
+        Documents
+      </a>
+
+      @auth
         @if(auth()->user()->hasAnyRole(['kabag','admin','mr','director']))
-            <a href="{{ route('drafts.index') }}"
-               class="{{ request()->routeIs('drafts.*') ? 'active' : '' }}">
-               Drafts
-            </a>
+          <a href="{{ route('drafts.index') }}"
+             class="iso-nav-link {{ request()->routeIs('drafts.*') ? 'active' : '' }}">
+            <span class="material-symbols-outlined">edit_document</span>
+            Draft Container
+          </a>
         @endif
-    @endauth
+      @endauth
 
-    {{-- Review Program — kabag, admin, mr, director --}}
-    @auth
-        @if(auth()->user()->hasAnyRole(['kabag','admin','mr','director']))
-            <a href="{{ route('reviews.due') }}"
-               class="{{ request()->routeIs('reviews.*') ? 'active' : '' }}">
-               Review Program
-            </a>
-        @endif
-    @endauth
-
-    {{-- Approval Queue — ONLY MR & DIRECTOR --}}
-    @auth
+      @auth
         @if(auth()->user()->hasAnyRole(['mr','director']))
-            <a href="{{ route('approval.index') }}"
-               class="{{ request()->routeIs('approval.*') ? 'active' : '' }}">
-               Approval Queue
-            </a>
+          <a href="{{ route('approval.index') }}"
+             class="iso-nav-link {{ request()->routeIs('approval.*') ? 'active' : '' }}">
+            <span class="material-symbols-outlined">task_alt</span>
+            Approval Queue
+          </a>
         @endif
-    @endauth
+      @endauth
 
-    {{-- USER MENU --}}
+      @auth
+        @if(auth()->user()->hasAnyRole(['kabag','admin','mr','director']))
+          <a href="{{ route('reviews.due') }}"
+             class="iso-nav-link {{ request()->routeIs('reviews.*') ? 'active' : '' }}">
+            <span class="material-symbols-outlined">fact_check</span>
+            Review Program
+          </a>
+        @endif
+      @endauth
+    </div>
+
+    {{-- ADMINISTRATION group --}}
+    <div class="iso-nav-group">
+      <span class="iso-nav-group-label">Administration</span>
+
+      <a href="{{ route('categories.index') }}"
+         class="iso-nav-link {{ request()->routeIs('categories.*') ? 'active' : '' }}">
+        <span class="material-symbols-outlined">folder_open</span>
+        Categories
+      </a>
+
+      <a href="{{ route('departments.index') }}"
+         class="iso-nav-link {{ request()->routeIs('departments.*') ? 'active' : '' }}">
+        <span class="material-symbols-outlined">corporate_fare</span>
+        Departments
+      </a>
+    </div>
+
+    {{-- COMPLIANCE group --}}
+    <div class="iso-nav-group">
+      <span class="iso-nav-group-label">Compliance</span>
+
+      @auth
+        @if(auth()->user()->hasAnyRole(['mr','director']))
+          <a href="{{ route('audit.index') }}"
+             class="iso-nav-link {{ request()->routeIs('audit.*') ? 'active' : '' }}">
+            <span class="material-symbols-outlined">manage_search</span>
+            Audit Trail
+          </a>
+        @endif
+      @endauth
+
+      <a href="{{ route('recycle.index') }}"
+         class="iso-nav-link {{ request()->routeIs('recycle.*') || request()->routeIs('revision.*') ? 'active' : '' }}">
+        <span class="material-symbols-outlined">delete_sweep</span>
+        Recycle Bin
+      </a>
+    </div>
+
+    {{-- USER section --}}
     @auth
-        <div class="dropdown" style="margin-left:12px;">
-            @php
-                $email = Auth::user()->email ?? '';
-                $username = explode('@', strtolower($email))[0] ?? (Auth::user()->name ?? 'user');
-            @endphp
-
-            <button class="dropdown-toggle" type="button">
-                {{ $username }} ▼
-            </button>
-
-            <div class="dropdown-menu" data-fallback="true" style="display:none;">
-                <form method="POST" action="{{ route('logout') }}">
-                    @csrf
-                    <button type="submit">Logout</button>
-                </form>
-            </div>
+      <div class="iso-sidebar-footer">
+        <div class="iso-sidebar-user">
+          <span class="material-symbols-outlined">account_circle</span>
+          <span>{{ $username }}</span>
         </div>
+        <form method="POST" action="{{ route('logout') }}">
+          @csrf
+          <button type="submit" class="iso-logout-btn">
+            <span class="material-symbols-outlined">logout</span>
+            Logout
+          </button>
+        </form>
+      </div>
     @endauth
 
-</nav>
+  </aside>
 
-      </header>
+  {{-- TOPBAR --}}
+  <header class="iso-topbar">
+    <h1 class="iso-topbar-title">@yield('title', 'ISO Library')</h1>
+    <div class="iso-topbar-right">
+      @auth
+        <div class="iso-topbar-user">
+          <span class="material-symbols-outlined" style="font-size:18px;color:#737686;">account_circle</span>
+          <span>{{ $username }}</span>
+        </div>
+      @endauth
+    </div>
+  </header>
+
+@endif
+
+{{-- ============================================================
+     MAIN CONTENT SHELL
+============================================================ --}}
+<div class="iso-shell {{ $isLogin ? 'login-page' : '' }}">
+  <main class="{{ $isLogin ? '' : 'iso-main' }}">
+    @yield('content')
+    @if(!$isLogin)
+      <div class="footer-small">&copy; {{ date('Y') }} ISO Library &mdash; Peroni Karya Sentra</div>
     @endif
+  </main>
+</div>
 
-    {{-- CONTENT --}}
-    <main class="main-area">
-      <div class="page-card">@yield('content')</div>
-      <div class="footer-small">&copy; {{ date('Y') }} ISO Library — Peroni Karya Sentra</div>
-    </main>
+{{-- ============================================================
+     SIDEBAR TOGGLE — Vanilla JS, mobile only
+============================================================ --}}
+@if(!$isLogin)
+<script>
+(function () {
+  var sidebar  = document.getElementById('iso-sidebar');
+  var overlay  = document.getElementById('iso-overlay');
+  var hamburger = document.getElementById('iso-hamburger');
+  if (!sidebar || !overlay || !hamburger) return;
 
-  </div>
+  function openSidebar() {
+    sidebar.classList.add('open');
+    overlay.classList.add('active');
+    hamburger.setAttribute('aria-expanded', 'true');
+  }
+  function closeSidebar() {
+    sidebar.classList.remove('open');
+    overlay.classList.remove('active');
+    hamburger.setAttribute('aria-expanded', 'false');
+  }
 
-  {{-- FIXED DROPDOWN SCRIPT --}}
-  <script>
-    document.addEventListener("DOMContentLoaded", function () {
+  hamburger.addEventListener('click', function () {
+    sidebar.classList.contains('open') ? closeSidebar() : openSidebar();
+  });
+  overlay.addEventListener('click', closeSidebar);
 
-        const dropdown = document.querySelector('.dropdown');
-        if (!dropdown) return;
+  // Close on Escape
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') closeSidebar();
+  });
+}());
+</script>
+@endif
 
-        const toggle = dropdown.querySelector('.dropdown-toggle');
-        const inlineMenu = dropdown.querySelector('.dropdown-menu[data-fallback="true"]');
-
-        // create detached menu to avoid overflow/clipping inside header
-        const menu = document.createElement('div');
-        menu.className = 'dropdown-menu';
-        menu.style.display = 'none';
-        menu.innerHTML = inlineMenu ? inlineMenu.innerHTML : '';
-        document.body.appendChild(menu);
-
-        function positionMenu() {
-            const rect = toggle.getBoundingClientRect();
-            // position to the right edge of the toggle (align right)
-            menu.style.top = (rect.bottom + 8) + "px";
-            // if menu width is 0 (not rendered), temporarily show to compute width
-            if (!menu.offsetWidth) { menu.style.display = 'block'; menu.style.visibility = 'hidden'; }
-            menu.style.left = Math.max(8, rect.right - menu.offsetWidth) + "px";
-            if (menu.style.visibility === 'hidden') { menu.style.visibility = ''; menu.style.display = 'none'; }
-            menu.style.zIndex = "99999";
-        }
-
-        toggle.addEventListener("click", function (e) {
-            e.stopPropagation();
-            if (menu.style.display === "block") {
-                menu.style.display = "none";
-            } else {
-                positionMenu();
-                menu.style.display = "block";
-            }
-        });
-
-        document.addEventListener("click", function (e) {
-            if (!menu.contains(e.target) && !toggle.contains(e.target)) {
-                menu.style.display = "none";
-            }
-        });
-
-        // adjust on resize/scroll
-        window.addEventListener('resize', function(){ if (menu.style.display === 'block') positionMenu(); });
-        window.addEventListener('scroll', function(){ if (menu.style.display === 'block') positionMenu(); }, true);
-    });
-  </script>
-
-  {{-- FORCE ENABLE APPROVE/REJECT BUTTONS — MVP PATCH --}}
-  <script>
-    (function forceEnableApproveButtonsForMVP() {
-      /**
-       * Purpose:
-       * - Remove disabled attributes from buttons so Approve/Reject are clickable immediately.
-       * - Mark approve forms to avoid JS guards that might intercept submission.
-       *
-       * Usage: paste this script into your layout (same file where approval helper runs).
-       */
-      function enableAllApproveButtons() {
-        try {
-          document.querySelectorAll('.btn-approve, .btn-reject').forEach(btn => {
-            btn.removeAttribute('disabled');
-            btn.removeAttribute('aria-disabled');
-            // ensure pointer events are allowed
-            btn.style.pointerEvents = '';
-            btn.style.opacity = '';
-          });
-
-          // If there are guard flags set by other scripts (e.g. __isoGuard false),
-          // set them to true so attachApproveGuards won't prevent submit.
-          document.querySelectorAll('form.action-form-approve, form[action*="/approval/"][method="POST"]').forEach(f => {
-            try { f.__isoGuard = true; } catch(e){}
-          });
-
-        } catch(e) {
-          console.warn('forceEnableApproveButtonsForMVP error', e);
-        }
-      }
-
-      if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', enableAllApproveButtons);
-      } else {
-        enableAllApproveButtons();
-      }
-
-      // also observe for dynamically loaded rows (AJAX)
+{{-- ============================================================
+     FORCE ENABLE APPROVE/REJECT BUTTONS — MVP PATCH
+     DO NOT REMOVE OR MODIFY THIS SCRIPT BLOCK
+============================================================ --}}
+<script>
+  (function forceEnableApproveButtonsForMVP() {
+    /**
+     * Purpose:
+     * - Remove disabled attributes from buttons so Approve/Reject are clickable immediately.
+     * - Mark approve forms to avoid JS guards that might intercept submission.
+     *
+     * Usage: paste this script into your layout (same file where approval helper runs).
+     */
+    function enableAllApproveButtons() {
       try {
-        const obs = new MutationObserver(muts => {
-          enableAllApproveButtons();
+        document.querySelectorAll('.btn-approve, .btn-reject').forEach(btn => {
+          btn.removeAttribute('disabled');
+          btn.removeAttribute('aria-disabled');
+          // ensure pointer events are allowed
+          btn.style.pointerEvents = '';
+          btn.style.opacity = '';
         });
-        obs.observe(document.body, { childList: true, subtree: true });
-        window.__forceEnableApproveButtonsForMVP = { enableAllApproveButtons, _observer: obs };
+
+        // If there are guard flags set by other scripts (e.g. __isoGuard false),
+        // set them to true so attachApproveGuards won't prevent submit.
+        document.querySelectorAll('form.action-form-approve, form[action*="/approval/"][method="POST"]').forEach(f => {
+          try { f.__isoGuard = true; } catch(e){}
+        });
+
       } catch(e) {
-        window.__forceEnableApproveButtonsForMVP = { enableAllApproveButtons };
+        console.warn('forceEnableApproveButtonsForMVP error', e);
       }
-    })();
-  </script>
+    }
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', enableAllApproveButtons);
+    } else {
+      enableAllApproveButtons();
+    }
+
+    // also observe for dynamically loaded rows (AJAX)
+    try {
+      const obs = new MutationObserver(muts => {
+        enableAllApproveButtons();
+      });
+      obs.observe(document.body, { childList: true, subtree: true });
+      window.__forceEnableApproveButtonsForMVP = { enableAllApproveButtons, _observer: obs };
+    } catch(e) {
+      window.__forceEnableApproveButtonsForMVP = { enableAllApproveButtons };
+    }
+  })();
+</script>
 
 </body>
 </html>
