@@ -53,7 +53,7 @@ Route::middleware('auth')->group(function () {
     });
 
     // Queues, History, Audit
-    Route::get('/approval-queue',   [ApprovalQueueController::class, 'index'])->name('approval.index');
+    Route::get('/approval-queue',   [ApprovalQueueController::class, 'index'])->name('approval.queue-legacy');
     Route::get('/revision-history', [RevisionHistoryController::class, 'index'])->name('revision.index');
     Route::get('/audit-log',        [AuditLogController::class, 'index'])->name('audit.index');
 });
