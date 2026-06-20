@@ -627,7 +627,228 @@ class DocumentController extends Controller
         $diff = $this->buildDiff($text1, $text2);
         $selectedVersions = [$ver1->id, $ver2->id];
 
-        return view('documents.compare', compact('doc', 'ver1', 'ver2', 'diff', 'selectedVersions', 'versions'));
+        // Fetch Creator & Approver Names
+        $ver1->load(['creator']);
+        $ver2->load(['creator']);
+        
+        $ver1CreatorName = optional($ver1->creator)->name ?? 'Tidak diketahui';
+        $ver2CreatorName = optional($ver2->creator)->name ?? 'Tidak diketahui';
+
+        $ver1Approver = $ver1->approved_by ? \App\Models\User::find($ver1->approved_by) : null;
+        $ver2Approver = $ver2->approved_by ? \App\Models\User::find($ver2->approved_by) : null;
+
+        $ver1ApproverName = $ver1Approver ? $ver1Approver->name : 'N/A';
+        $ver2ApproverName = $ver2Approver ? $ver2Approver->name : 'N/A';
+
+        // Calculate statistics & summary deterministically
+        $stats = [
+            'added_words' => 0,
+            'removed_words' => 0,
+            'modified_blocks' => 0,
+        ];
+        $summary = [];
+
+        try {
+            if (class_exists(\Jfcherng\Diff\DiffHelper::class)) {
+                // Word level json diff
+                $jsonStr = \Jfcherng\Diff\DiffHelper::calculate($text1, $text2, 'Json', [
+                    'context' => 0,
+                    'ignoreWhitespace' => true,
+                    'ignoreCase' => false,
+                ], [
+                    'detailLevel' => 'word'
+                ]);
+
+                $diffArray = json_decode($jsonStr, true);
+
+                if (is_array($diffArray)) {
+                    $countWords = function(string $str): int {
+                        $str = strip_tags($str);
+                        $words = preg_split('/\s+/u', trim($str));
+                        return count(array_filter($words));
+                    };
+
+                    foreach ($diffArray as $sequence) {
+                        foreach ($sequence as $block) {
+                            $tag = $block['tag'];
+                            if ($tag === 1) { // EQUAL
+                                continue;
+                            }
+
+                            $stats['modified_blocks']++;
+
+                            if ($tag === 2) { // DELETED
+                                $oldText = implode(' ', $block['old']['lines']);
+                                $stats['removed_words'] += $countWords($oldText);
+                            } elseif ($tag === 4) { // INSERTED
+                                $newText = implode(' ', $block['new']['lines']);
+                                $stats['added_words'] += $countWords($newText);
+                            } elseif ($tag === 8) { // REPLACED / MODIFIED
+                                $oldLine = implode(' ', $block['old']['lines']);
+                                $newLine = implode(' ', $block['new']['lines']);
+
+                                // Parse inline deletions
+                                if (preg_match_all('/<del>(.*?)<\/del>/s', $oldLine, $delMatches)) {
+                                    foreach ($delMatches[1] as $delText) {
+                                        $stats['removed_words'] += $countWords($delText);
+                                    }
+                                }
+
+                                // Parse inline insertions
+                                if (preg_match_all('/<ins>(.*?)<\/ins>/s', $newLine, $insMatches)) {
+                                    foreach ($insMatches[1] as $insText) {
+                                        $stats['added_words'] += $countWords($insText);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Sentence-level aligned diff for summary
+                $splitSentences = function(string $text): string {
+                    $text = str_replace(["\r\n", "\r"], "\n", $text);
+                    $sentences = preg_split('/(?<=[.!?])\s+/u', $text);
+                    return implode("\n", array_filter(array_map('trim', $sentences)));
+                };
+
+                $lines1 = $splitSentences($text1);
+                $lines2 = $splitSentences($text2);
+
+                $jsonSummaryStr = \Jfcherng\Diff\DiffHelper::calculate($lines1, $lines2, 'Json', [
+                    'context' => 0,
+                    'ignoreWhitespace' => true,
+                    'ignoreCase' => false,
+                ], [
+                    'detailLevel' => 'word'
+                ]);
+
+                $diffSummaryArray = json_decode($jsonSummaryStr, true);
+
+                if (is_array($diffSummaryArray)) {
+                    $bulletCount = 0;
+                    foreach ($diffSummaryArray as $sequence) {
+                        foreach ($sequence as $block) {
+                            $tag = $block['tag'];
+                            if ($tag === 1) continue;
+
+                            if ($bulletCount >= 10) {
+                                break 2;
+                            }
+
+                            if ($tag === 4) { // INSERTED
+                                foreach ($block['new']['lines'] as $line) {
+                                    $clean = trim(strip_tags($line));
+                                    if ($clean) {
+                                        $tempClean = preg_replace('/[0-9.\-\s\t]+/', '', $clean);
+                                        if (strlen($tempClean) < 3) {
+                                            continue;
+                                        }
+                                        if (strlen($clean) > 80) $clean = mb_substr($clean, 0, 77) . '...';
+                                        $summary[] = "Menambahkan poin: \"{$clean}\"";
+                                        $bulletCount = count(array_unique(array_filter($summary)));
+                                        if ($bulletCount >= 10) break 2;
+                                    }
+                                }
+                            } elseif ($tag === 2) { // DELETED
+                                foreach ($block['old']['lines'] as $line) {
+                                    $clean = trim(strip_tags($line));
+                                    if ($clean) {
+                                        $tempClean = preg_replace('/[0-9.\-\s\t]+/', '', $clean);
+                                        if (strlen($tempClean) < 3) {
+                                            continue;
+                                        }
+                                        if (strlen($clean) > 80) $clean = mb_substr($clean, 0, 77) . '...';
+                                        $summary[] = "Menghapus poin: \"{$clean}\"";
+                                        $bulletCount = count(array_unique(array_filter($summary)));
+                                        if ($bulletCount >= 10) break 2;
+                                    }
+                                }
+                            } elseif ($tag === 8) { // MODIFIED
+                                $oldLines = $block['old']['lines'];
+                                $newLines = $block['new']['lines'];
+                                $max = max(count($oldLines), count($newLines));
+                                for ($i = 0; $i < $max; $i++) {
+                                    $oldL = isset($oldLines[$i]) ? trim($oldLines[$i]) : null;
+                                    $newL = isset($newLines[$i]) ? trim($newLines[$i]) : null;
+
+                                    if ($oldL !== null && $newL !== null) {
+                                        preg_match_all('/<del>(.*?)<\/del>/s', $oldL, $delMatches);
+                                        preg_match_all('/<ins>(.*?)<\/ins>/s', $newL, $insMatches);
+                                        $dels = array_filter(array_map('strip_tags', $delMatches[1] ?? []));
+                                        $inss = array_filter(array_map('strip_tags', $insMatches[1] ?? []));
+
+                                        if (!empty($dels) && !empty($inss)) {
+                                            $delJoined = implode(', ', $dels);
+                                            $insJoined = implode(', ', $inss);
+                                            $tempDel = preg_replace('/[0-9.\-\s\t]+/', '', $delJoined);
+                                            $tempIns = preg_replace('/[0-9.\-\s\t]+/', '', $insJoined);
+                                            if (strlen($tempDel) < 2 && strlen($tempIns) < 2) {
+                                                continue;
+                                            }
+                                            if (strlen($delJoined) > 40) $delJoined = mb_substr($delJoined, 0, 37) . '...';
+                                            if (strlen($insJoined) > 40) $insJoined = mb_substr($insJoined, 0, 37) . '...';
+                                            $summary[] = "Mengubah \"{$delJoined}\" menjadi \"{$insJoined}\"";
+                                        } elseif (!empty($inss)) {
+                                            $insJoined = implode(', ', $inss);
+                                            $tempIns = preg_replace('/[0-9.\-\s\t]+/', '', $insJoined);
+                                            if (strlen($tempIns) < 2) {
+                                                continue;
+                                            }
+                                            if (strlen($insJoined) > 60) $insJoined = mb_substr($insJoined, 0, 57) . '...';
+                                            $summary[] = "Menambahkan detail: \"{$insJoined}\"";
+                                        } elseif (!empty($dels)) {
+                                            $delJoined = implode(', ', $dels);
+                                            $tempDel = preg_replace('/[0-9.\-\s\t]+/', '', $delJoined);
+                                            if (strlen($tempDel) < 2) {
+                                                continue;
+                                            }
+                                            if (strlen($delJoined) > 60) $delJoined = mb_substr($delJoined, 0, 57) . '...';
+                                            $summary[] = "Menghapus detail: \"{$delJoined}\"";
+                                        }
+                                    } elseif ($newL !== null) {
+                                        $clean = trim(strip_tags($newL));
+                                        if ($clean) {
+                                            $tempClean = preg_replace('/[0-9.\-\s\t]+/', '', $clean);
+                                            if (strlen($tempClean) < 3) {
+                                                continue;
+                                            }
+                                            if (strlen($clean) > 80) $clean = mb_substr($clean, 0, 77) . '...';
+                                            $summary[] = "Menambahkan poin: \"{$clean}\"";
+                                        }
+                                    } elseif ($oldL !== null) {
+                                        $clean = trim(strip_tags($oldL));
+                                        if ($clean) {
+                                            $tempClean = preg_replace('/[0-9.\-\s\t]+/', '', $clean);
+                                            if (strlen($tempClean) < 3) {
+                                                continue;
+                                            }
+                                            if (strlen($clean) > 80) $clean = mb_substr($clean, 0, 77) . '...';
+                                            $summary[] = "Menghapus poin: \"{$clean}\"";
+                                        }
+                                    }
+                                    $bulletCount = count(array_unique(array_filter($summary)));
+                                    if ($bulletCount >= 10) break 2;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (\Throwable $e) {
+            // fallback
+        }
+
+        $summary = array_values(array_unique(array_filter($summary)));
+        if (empty($summary)) {
+            $summary = ['Tidak ditemukan perubahan signifikan.'];
+        }
+
+        return view('documents.compare', compact(
+            'doc', 'ver1', 'ver2', 'diff', 'selectedVersions', 'versions',
+            'ver1CreatorName', 'ver2CreatorName', 'ver1ApproverName', 'ver2ApproverName',
+            'stats', 'summary'
+        ));
     }
 
     public function chooseCompare($versionId)
