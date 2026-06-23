@@ -2,14 +2,12 @@
 @extends('layouts.iso')
 
 @section('content')
-<div class="container-narrow" style="max-width:920px;margin:18px auto;">
-    <h2 style="margin-bottom:8px;">New Document (Upload Baseline)</h2>
-
-    {{-- Keterangan singkat --}}
-    <div class="form-row" style="margin-bottom:12px;">
-        <div class="small-muted" style="margin-top:6px;">
+<div class="container-narrow" style="max-width:920px; margin: 24px auto; padding: 0 16px;">
+    <div style="margin-bottom: 24px;">
+        <h1 style="font-size: 24px; font-weight: 800; color: #111827; margin-bottom: 6px;">New Document (Upload Baseline)</h1>
+        <p style="font-size: 14px; color: #6b7280; margin: 0;">
             Pilih <b>Dokumen Baru</b> untuk membuat baseline v1 — pilih <b>Ganti Versi Lama</b> jika ingin mengganti versi sebuah dokumen yang sudah ada.
-        </div>
+        </p>
     </div>
 
     @php
@@ -105,14 +103,14 @@ document.addEventListener('DOMContentLoaded', function () {
             modeHidden.value = 'new';
             if (mainBtn) {
                 mainBtn.disabled = false;
-                mainBtn.textContent = 'Save Baseline (v1) & Publish';
+                mainBtn.textContent = 'Simpan Dokumen Baru';
             }
         } else if (v === 'replace') {
             submitForHidden.value = 'draft';
             modeHidden.value = 'replace';
             if (mainBtn) {
                 mainBtn.disabled = false;
-                mainBtn.textContent = 'Save as Draft (New Version)';
+                mainBtn.textContent = 'Kirim Revisi ke Draft Container';
             }
         } else {
             // fallback

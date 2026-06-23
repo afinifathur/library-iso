@@ -4,8 +4,13 @@
 @section('title', 'Edit Document — '.($document->doc_code ?: $document->title))
 
 @section('content')
-<div class="container-narrow" style="max-width:920px;margin:18px auto;">
-    <h2 style="margin-bottom:8px;">Edit Document — {{ $document->doc_code ?? $document->title }}</h2>
+<div class="container-narrow" style="max-width:920px; margin: 24px auto; padding: 0 16px;">
+    <div style="margin-bottom: 24px;">
+        <h1 style="font-size: 24px; font-weight: 800; color: #111827; margin-bottom: 6px;">Edit Document — {{ $document->doc_code ?? $document->title }}</h1>
+        <p style="font-size: 14px; color: #6b7280; margin: 0;">
+            Edit metadata dokumen atau upload versi baru. Pilih <strong>Ganti Versi Lama</strong> bila ingin menambahkan draft/versi pengganti.
+        </p>
+    </div>
 
     @php
         // Action menuju updateCombined (sesuai DocumentController@updateCombined)
@@ -16,25 +21,78 @@
         $showDraftLink = true;
     @endphp
 
-    {{-- Short helper text --}}
-    <div class="form-row" style="margin-bottom:12px;">
-        <div class="small-muted" style="margin-top:6px;">
-            Edit metadata dokumen atau upload versi baru. Pilih <strong>Ganti Versi Lama</strong> bila ingin menambahkan draft/versi pengganti.
-        </div>
-    </div>
+    <style>
+    .modern-label {
+        font-size: 13px;
+        font-weight: 600;
+        color: #4b5563;
+        margin-bottom: 6px;
+        display: block;
+    }
+    .modern-select-wrapper {
+        position: relative;
+        display: block;
+        width: 100%;
+    }
+    .modern-select {
+        width: 100%;
+        height: 44px;
+        border-radius: 10px;
+        border: 1px solid #d1d5db;
+        background-color: #ffffff;
+        padding: 0 40px 0 16px;
+        font-size: 14px;
+        color: #1f2937;
+        appearance: none;
+        -webkit-appearance: none;
+        cursor: pointer;
+        transition: all 0.2s ease;
+    }
+    .modern-select:hover {
+        border-color: #9ca3af;
+    }
+    .modern-select:focus {
+        outline: none;
+        border-color: #2563eb;
+        box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+    }
+    .modern-select-arrow {
+        position: absolute;
+        top: 50%;
+        right: 16px;
+        transform: translateY(-50%);
+        pointer-events: none;
+        width: 18px;
+        height: 18px;
+        color: #6b7280;
+    }
+    .helper-text {
+        font-size: 12px;
+        color: #6b7280;
+        margin-top: 6px;
+        line-height: 1.4;
+    }
+    </style>
 
     {{-- Top-level Upload Type control (agar UX konsisten dengan create) --}}
-    <div class="mb-4">
-      <label for="upload_type_top" class="block text-sm font-medium text-gray-700">Jenis Pengajuan <span class="text-red-500">*</span></label>
-      <select id="upload_type_top" name="upload_type_top" class="mt-1 block w-full rounded border p-2" required>
-        @php
-            $pref = old('upload_type') ?: '';
-        @endphp
-        <option value="" {{ $pref==='' ? 'selected' : '' }}>-- silahkan pilih jenis pengajuan (wajib) --</option>
-        <option value="new" {{ $pref==='new' ? 'selected' : '' }}>Dokumen Baru</option>
-        <option value="replace" {{ $pref==='replace' ? 'selected' : '' }}>Ganti Versi Lama</option>
-      </select>
-      <p id="uploadTypeHelp" class="mt-2 text-sm text-gray-500">
+    <div style="margin-bottom: 20px;">
+      <label for="upload_type_top" class="modern-label">Jenis Pengajuan <span style="color:#ef4444;">*</span></label>
+      <div class="modern-select-wrapper">
+          <select id="upload_type_top" name="upload_type_top" class="modern-select" required>
+            @php
+                $pref = old('upload_type') ?: '';
+            @endphp
+            <option value="" {{ $pref==='' ? 'selected' : '' }}>-- silahkan pilih jenis pengajuan (wajib) --</option>
+            <option value="new" {{ $pref==='new' ? 'selected' : '' }}>Dokumen Baru</option>
+            <option value="replace" {{ $pref==='replace' ? 'selected' : '' }}>Ganti Versi Lama</option>
+          </select>
+          <span class="modern-select-arrow">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                  <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd" />
+              </svg>
+          </span>
+      </div>
+      <p id="uploadTypeHelp" class="helper-text">
         Pilih <strong>Dokumen Baru</strong> untuk membuat baseline v1. Pilih <strong>Ganti Versi Lama</strong> untuk membuat versi baru sebagai draft.
       </p>
     </div>
@@ -113,13 +171,13 @@ document.addEventListener('DOMContentLoaded', function () {
         if (v === 'new') {
             submitForHidden.value = 'publish';
             modeHidden.value = 'new';
-            if (publishBtn) { publishBtn.disabled = false; publishBtn.textContent = 'Save Baseline (v1) & Publish'; }
+            if (publishBtn) { publishBtn.disabled = false; publishBtn.textContent = 'Simpan Dokumen Baru'; }
             if (draftBtn) { draftBtn.disabled = false; }
         } else if (v === 'replace') {
             submitForHidden.value = 'draft';
             modeHidden.value = 'replace';
-            if (publishBtn) { publishBtn.disabled = false; publishBtn.textContent = 'Save Baseline (v1) & Publish'; }
-            if (draftBtn) { draftBtn.disabled = false; draftBtn.textContent = 'Save as Draft (New Version)'; }
+            if (publishBtn) { publishBtn.disabled = false; publishBtn.textContent = 'Simpan Dokumen Baru'; }
+            if (draftBtn) { draftBtn.disabled = false; draftBtn.textContent = 'Kirim Revisi ke Draft Container'; }
         } else {
             // fallback
             submitForHidden.value = 'publish';

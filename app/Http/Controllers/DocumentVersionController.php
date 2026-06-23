@@ -236,6 +236,10 @@ class DocumentVersionController extends Controller
      * ------------------------ */
     public function show(DocumentVersion $version)
     {
+        if (!$this->canViewVersion(Auth::user(), $version)) {
+            abort(403, 'Anda tidak memiliki hak akses untuk melihat versi ini.');
+        }
+
         $version->load(['document.department','creator']);
         $otherVersions = DocumentVersion::where('document_id', $version->document_id)->orderByDesc('id')->get();
         return view('versions.show', ['version'=>$version,'document'=>$version->document,'otherVersions'=>$otherVersions]);
@@ -429,5 +433,35 @@ class DocumentVersionController extends Controller
 
         // if not in vN pattern, don't allow free arbitrary labels -> use next
         return 'v' . $next;
+    }
+
+    protected function canViewVersion($user, $version): bool
+    {
+        if (!$user) {
+            return false;
+        }
+
+        $status = strtolower($version->status ?? '');
+
+        // APPROVED & SUPERSEDED: all logged-in users can view
+        if (in_array($status, ['approved', 'superseded'])) {
+            return true;
+        }
+
+        // Check creator
+        if ((int)$version->created_by === (int)$user->id) {
+            return true;
+        }
+
+        // Role checks
+        if ($this->userHasAnyRole($user, ['admin', 'director'])) {
+            return true;
+        }
+
+        if ($status === 'submitted' && $this->userHasAnyRole($user, ['mr'])) {
+            return true;
+        }
+
+        return false;
     }
 }

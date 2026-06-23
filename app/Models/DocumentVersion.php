@@ -134,20 +134,77 @@ class DocumentVersion extends Model
                 if (\Illuminate\Support\Facades\Schema::hasColumn($doc->getTable(), 'revision_date')) {
                     $doc->revision_date = $this->approved_at;
                 }
+                if (\Illuminate\Support\Facades\Schema::hasColumn($doc->getTable(), 'revision_number')) {
+                    $doc->revision_number = max(1, (int)($doc->revision_number ?? 0) + 1);
+                }
                 $doc->approved_by = $userId;
                 $doc->approved_at = $this->approved_at;
                 $doc->save();
+            }
+
+            // Write to approval_logs
+            if (\Illuminate\Support\Facades\Schema::hasTable('approval_logs')) {
+                $role = 'director';
+                if ($userId) {
+                    $user = \App\Models\User::find($userId);
+                    if ($user) {
+                        if (method_exists($user, 'getRoleNames')) {
+                            try { $names = $user->getRoleNames()->toArray(); $role = $names[0] ?? 'director'; } catch (\Throwable $_) {}
+                        } elseif (method_exists($user, 'roles')) {
+                            try { $role = $user->roles()->pluck('name')->first() ?? 'director'; } catch (\Throwable $_) {}
+                        } elseif (isset($user->roles) && is_iterable($user->roles)) {
+                            $role = collect($user->roles)->pluck('name')->first() ?? 'director';
+                        }
+                    }
+                }
+                DB::table('approval_logs')->insert([
+                    'document_version_id' => $this->id,
+                    'user_id'             => $userId,
+                    'role'                => $role,
+                    'action'              => 'approve',
+                    'note'                => 'Approved and promoted',
+                    'created_at'          => now(),
+                    'updated_at'          => now(),
+                ]);
             }
         });
     }
 
     public function rejectByRole(string $reason = null, $userId = null)
     {
-        $this->status = 'rejected';
-        $this->approval_stage = 'KABAG';
-        $this->rejected_reason = $reason;
-        $this->rejected_by = $userId;
-        $this->rejected_at = Carbon::now();
-        $this->save();
+        DB::transaction(function () use ($reason, $userId) {
+            $this->status = 'rejected';
+            $this->approval_stage = 'KABAG';
+            $this->rejected_reason = $reason;
+            $this->rejected_by = $userId;
+            $this->rejected_at = Carbon::now();
+            $this->save();
+
+            // Write to approval_logs
+            if (\Illuminate\Support\Facades\Schema::hasTable('approval_logs')) {
+                $role = 'director';
+                if ($userId) {
+                    $user = \App\Models\User::find($userId);
+                    if ($user) {
+                        if (method_exists($user, 'getRoleNames')) {
+                            try { $names = $user->getRoleNames()->toArray(); $role = $names[0] ?? 'director'; } catch (\Throwable $_) {}
+                        } elseif (method_exists($user, 'roles')) {
+                            try { $role = $user->roles()->pluck('name')->first() ?? 'director'; } catch (\Throwable $_) {}
+                        } elseif (isset($user->roles) && is_iterable($user->roles)) {
+                            $role = collect($user->roles)->pluck('name')->first() ?? 'director';
+                        }
+                    }
+                }
+                DB::table('approval_logs')->insert([
+                    'document_version_id' => $this->id,
+                    'user_id'             => $userId,
+                    'role'                => $role,
+                    'action'              => 'reject',
+                    'note'                => $reason ?? 'Rejected and returned to draft',
+                    'created_at'          => now(),
+                    'updated_at'          => now(),
+                ]);
+            }
+        });
     }
 }

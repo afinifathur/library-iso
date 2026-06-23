@@ -57,19 +57,9 @@ class DraftController extends Controller
     {
         $version = DocumentVersion::with(['document', 'creator'])->findOrFail($versionId);
 
-        // authorization: only visible if draft/rejected OR user is admin/mr/director
         $user = $request->user();
-        if (! $user) {
-            abort(403);
-        }
-
-        if (! in_array($version->status, ['draft','rejected'], true)) {
-            // allow MR/admin/director to view any non-final version in some setups
-            if (method_exists($user, 'hasAnyRole') && $user->hasAnyRole(['admin','mr','director'])) {
-                // ok
-            } else {
-                abort(403, 'Version is not in Draft/Rejected state.');
-            }
+        if (!$this->canViewVersion($user, $version)) {
+            abort(403, 'Anda tidak memiliki hak akses untuk melihat versi ini.');
         }
 
         return view('drafts.show', ['version' => $version]);
@@ -247,5 +237,46 @@ class DraftController extends Controller
         }
 
         return redirect()->route('drafts.show', $version->id)->with('success', 'Versi dibuka kembali sebagai draft.');
+    }
+
+    protected function canViewVersion($user, $version): bool
+    {
+        if (!$user) {
+            return false;
+        }
+
+        $status = strtolower($version->status ?? '');
+
+        // APPROVED & SUPERSEDED: all logged-in users can view
+        if (in_array($status, ['approved', 'superseded'])) {
+            return true;
+        }
+
+        // Check creator
+        if ((int)$version->created_by === (int)$user->id) {
+            return true;
+        }
+
+        // Role checks
+        if (method_exists($user, 'hasAnyRole')) {
+            if ($user->hasAnyRole(['admin', 'director'])) {
+                return true;
+            }
+
+            if ($status === 'submitted' && $user->hasAnyRole(['mr'])) {
+                return true;
+            }
+        } else {
+            // Fallback role check if method doesn't exist
+            $roles = method_exists($user, 'roles') ? $user->roles()->pluck('name')->toArray() : [];
+            if (array_intersect($roles, ['admin', 'director'])) {
+                return true;
+            }
+            if ($status === 'submitted' && array_intersect($roles, ['mr'])) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

@@ -152,23 +152,7 @@ class ApprovalController extends Controller
                 }
 
                 DB::transaction(function () use ($version, $user, $request) {
-                    $version->update([
-                        'status' => 'approved',
-                        'approval_stage' => 'DONE',
-                        'approved_by' => $user->id,
-                        'approved_at' => Carbon::now(),
-                    ]);
-
-                    $doc = $version->document;
-                    if ($doc) {
-                        $doc->update([
-                            'current_version_id' => $version->id,
-                            'revision_date' => Carbon::now(),
-                        ]);
-                    }
-
-                    $role = $this->getCurrentRoleName($user);
-                    $this->insertApprovalLog($version->id, $user->id, $role, 'approve', 'Approved and promoted');
+                    $version->approveByDirector($user->id);
                     $this->maybeAudit('director_approve_version', $user->id, $version->document_id, $version->id, $request->ip());
                 });
 
@@ -217,16 +201,7 @@ class ApprovalController extends Controller
 
         try {
             DB::transaction(function () use ($version, $user, $reason, $request) {
-                $version->update([
-                    'status' => 'rejected',
-                    'approval_stage' => 'DONE',
-                    'rejected_by' => $user->id,
-                    'rejected_at' => Carbon::now(),
-                    'rejected_reason' => $reason,
-                ]);
-
-                $role = $this->getCurrentRoleName($user);
-                $this->insertApprovalLog($version->id, $user->id, $role, 'reject', $reason);
+                $version->rejectByRole($reason, $user->id);
                 $this->maybeAudit('reject_version', $user->id, $version->document_id, $version->id, $request->ip(), ['reason' => $reason]);
             });
 

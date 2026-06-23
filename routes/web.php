@@ -66,6 +66,7 @@ Route::middleware('auth')->group(function () {
         Route::get('create',           [DocumentController::class, 'create'])->name('create');
         Route::post('',                [DocumentController::class, 'store'])->name('store');
         Route::post('upload-pdf',      [DocumentController::class, 'uploadPdf'])->name('uploadPdf');
+        Route::get('check-code',       [DocumentController::class, 'checkCode'])->name('checkCode');
 
         // Show / edit / update / compare
         Route::get('{document}',       [DocumentController::class, 'show'])

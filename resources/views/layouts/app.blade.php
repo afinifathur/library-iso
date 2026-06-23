@@ -199,6 +199,9 @@
       @if(session('info'))
         <div style="margin-bottom:12px;padding:10px;border-radius:8px;background:#eff6ff;color:#1e3a8a;">{{ session('info') }}</div>
       @endif
+      @if(session('warning'))
+        <div style="margin-bottom:12px;padding:10px;border-radius:8px;background:#fffbeb;color:#78350f;">{{ session('warning') }}</div>
+      @endif
     </div>
 
     {{-- MAIN CONTENT --}}
@@ -301,6 +304,9 @@
       @endif
       @if(session('error'))
         Swal.fire({ icon:'error', title:'Perhatian', text:@json(session('error')), confirmButtonText:'Tutup' });
+      @endif
+      @if(session('warning'))
+        Swal.fire({ icon:'warning', title:'Perhatian', text:@json(session('warning')), confirmButtonText:'Tutup' });
       @endif
       @if(session('pending'))
         @if(Route::has('approval.index'))

@@ -27,8 +27,14 @@ class DocumentController extends Controller
         $departments = Department::orderBy('code')->get();
         $categories = class_exists(\App\Models\Category::class) ? \App\Models\Category::orderBy('name')->get() : [];
 
+        $user = $request->user();
+        $isModerator = $user && method_exists($user, 'hasAnyRole') && $user->hasAnyRole(['admin', 'mr', 'director']);
+
         $docs = Document::with(['department', 'currentVersion'])
-            ->when($request->filled('department'), fn($q) => $q->where('department_id', $request->input('department')))
+            ->when(!$isModerator, function ($q) {
+                $q->whereNotNull('current_version_id');
+            })
+            ->when($request->filled('department'), fn($q) => $q->whereHas('department', fn($qd) => $qd->where('code', $request->input('department'))))
             ->when($request->filled('search'), function ($q) use ($request) {
                 $s = $request->input('search');
                 $q->where(function ($qq) use ($s) {
@@ -93,7 +99,7 @@ class DocumentController extends Controller
             'file'          => 'nullable|file|mimes:pdf|max:51200',
             'master_file'   => 'nullable|file|mimes:doc,docx,xls,xlsx|max:102400',
             'pasted_text'   => 'nullable|string',
-            'change_note'   => 'nullable|string|max:2000',
+            'change_note'   => 'required|string|max:2000',
             'related_links' => 'nullable|string',
         ]);
 
@@ -196,7 +202,7 @@ class DocumentController extends Controller
         'master_file'   => 'nullable|file|mimes:doc,docx,xls,xlsx|max:102400',
         'pasted_text'   => 'nullable|string',
         'version_label' => 'nullable|string|max:50',
-        'change_note'   => 'nullable|string|max:2000',
+        'change_note'   => 'required|string|max:2000',
         'related_links' => 'nullable|string',
     ]);
 
@@ -248,36 +254,7 @@ class DocumentController extends Controller
         $checksum = hash('sha256', $content);
     }
 
-    if ($submit === 'publish') {
-        $version = DocumentVersion::create([
-            'document_id'   => $document->id,
-            'version_label' => $versionLabel,
-            'status'        => 'approved',
-            'approval_stage'=> 'DONE',
-            'pdf_path'      => $pdf_path,
-            'file_path'     => $pdf_path,
-            'master_path'   => $master_path,
-            'file_mime'     => $file_mime,
-            'checksum'      => $checksum,
-            'change_note'   => $validated['change_note'] ?? null,
-            'plain_text'    => $request->input('pasted_text') ?? null,
-            'created_by'    => $user->id ?? null,
-            'approved_by'   => $user->id ?? null,
-            'approved_at'   => now(),
-        ]);
-
-        $document->update([
-            'current_version_id' => $version->id,
-            'revision_number'    => 1,
-            'revision_date'      => now(),
-        ]);
-
-        $this->maybeAudit('create_baseline_publish', $user->id, $document->id, $version->id, $request->ip());
-
-        return redirect()->route('documents.show', $document->id)->with('success', 'Baseline uploaded and published.');
-    }
-
-    // Save as draft
+    // Always save as draft under KABAG approval stage
     $version = DocumentVersion::create([
         'document_id'   => $document->id,
         'version_label' => $versionLabel,
@@ -290,12 +267,13 @@ class DocumentController extends Controller
         'checksum'      => $checksum,
         'change_note'   => $validated['change_note'] ?? null,
         'plain_text'    => $request->input('pasted_text') ?? null,
+        'pasted_text'   => $request->input('pasted_text') ?? null,
         'created_by'    => $user->id ?? null,
     ]);
 
     $this->maybeAudit('create_baseline_draft', $user->id, $document->id, $version->id, $request->ip());
 
-    return redirect()->route('drafts.index')->with('success', 'Baseline created as draft.');
+    return redirect()->route('drafts.index')->with('success', 'Dokumen baru berhasil disimpan sebagai draft dan masuk ke Draft Container.');
 }
 
 
@@ -565,7 +543,10 @@ class DocumentController extends Controller
     public function compare(Request $request, $documentId)
     {
         $doc = Document::findOrFail($documentId);
-        $versions = $doc->versions()->orderByDesc('id')->get();
+        $user = $request->user();
+        $versions = $doc->versions()->orderByDesc('id')->get()->filter(function ($v) use ($user) {
+            return $this->canViewVersion($user, $v);
+        })->values();
 
         if ($versions->count() < 2) {
             return back()->with('error', 'Dokumen ini belum punya 2 versi untuk dibandingkan.');
@@ -619,6 +600,20 @@ class DocumentController extends Controller
                 $ver1 = $v1;
                 $ver2 = $v2;
             }
+        }
+
+        // Ensure authorization
+        $user = $request->user();
+        if (!$this->canViewVersion($user, $ver1) || !$this->canViewVersion($user, $ver2)) {
+            \Illuminate\Support\Facades\Log::warning('Unauthorized compare attempt blocked', [
+                'user_id' => $user ? $user->id : null,
+                'ver1_id' => $ver1->id,
+                'ver2_id' => $ver2->id,
+                'ver1_status' => $ver1->status,
+                'ver2_status' => $ver2->status,
+                'timestamp' => now()->toDateTimeString(),
+            ]);
+            abort(403, 'Anda tidak memiliki hak akses untuk membandingkan versi ini.');
         }
 
         $text1 = $ver1->plain_text ?: ($ver1->pasted_text ?: '(Tidak ada teks)');
@@ -854,6 +849,10 @@ class DocumentController extends Controller
     public function chooseCompare($versionId)
     {
         $version = DocumentVersion::with('document')->findOrFail($versionId);
+        $user = request()->user();
+        if (!$this->canViewVersion($user, $version)) {
+            abort(403, 'Anda tidak memiliki hak akses untuk membandingkan versi ini.');
+        }
         $document = $version->document;
         $candidates = $document->versions()->where('status','approved')->orderByDesc('id')->get();
         return view('versions.choose_compare', compact('version','document','candidates'));
@@ -866,33 +865,45 @@ class DocumentController extends Controller
 
         // MR forwards to DIRECTOR
         if (method_exists($user, 'hasAnyRole') && $user->hasAnyRole(['mr'])) {
-            $version->update([
-                'status' => 'submitted',
-                'approval_stage' => 'DIRECTOR',
-                'submitted_by' => $this->hasColumn($version, 'submitted_by') ? $user->id : null,
-                'submitted_at' => $this->hasColumn($version, 'submitted_at') ? now() : null,
-            ]);
+            // Self-approval check:
+            if ($version->created_by === $user->id) {
+                return back()->with('error', 'Self-approval is prohibited for MR reviews.');
+            }
+
+            DB::transaction(function () use ($version, $user) {
+                $version->update([
+                    'status' => 'submitted',
+                    'approval_stage' => 'DIRECTOR',
+                    'submitted_by' => $this->hasColumn($version, 'submitted_by') ? $user->id : null,
+                    'submitted_at' => $this->hasColumn($version, 'submitted_at') ? now() : null,
+                ]);
+
+                // Log to approval_logs
+                if (\Illuminate\Support\Facades\Schema::hasTable('approval_logs')) {
+                    \Illuminate\Support\Facades\DB::table('approval_logs')->insert([
+                        'document_version_id' => $version->id,
+                        'user_id'             => $user->id,
+                        'role'                => 'mr',
+                        'action'              => 'forward_to_director',
+                        'note'                => 'Forwarded to Director',
+                        'created_at'          => now(),
+                        'updated_at'          => now(),
+                    ]);
+                }
+            });
+
             return back()->with('success','Version forwarded to Director.');
         }
 
         // Director/Admin final approval
         if (method_exists($user, 'hasAnyRole') && $user->hasAnyRole(['director','admin'])) {
-            DB::transaction(function () use ($version, $user) {
-                $update = ['status' => 'approved', 'approval_stage' => 'DONE'];
-                if ($this->hasColumn($version, 'approved_by')) $update['approved_by'] = $user->id;
-                if ($this->hasColumn($version, 'approved_at')) $update['approved_at'] = now();
-                $version->update($update);
+            // Self-approval check:
+            if ($version->created_by === $user->id) {
+                return back()->with('error', 'Self-approval is prohibited.');
+            }
 
-                $doc = $version->document;
-                $docUpdate = [
-                    'current_version_id' => $version->id,
-                    'revision_number' => $this->incRevision($doc->revision_number),
-                    'revision_date' => now(),
-                ];
-                if ($this->hasColumn($doc, 'approved_by')) $docUpdate['approved_by'] = $user->id;
-                if ($this->hasColumn($doc, 'approved_at')) $docUpdate['approved_at'] = now();
-                $doc->update($docUpdate);
-            });
+            // Single Source of Truth promotion
+            $version->approveByDirector($user->id);
 
             return back()->with('success','Version approved and promoted to current.');
         }
@@ -907,14 +918,10 @@ class DocumentController extends Controller
         if (! $user) abort(403);
         if (method_exists($user,'hasAnyRole') && ! $user->hasAnyRole(['mr','director','admin'])) abort(403);
 
-        $update = ['status' => 'rejected', 'approval_stage' => 'KABAG'];
-        if ($this->hasColumn($version, 'rejected_by')) $update['rejected_by'] = $user->id;
-        if ($this->hasColumn($version, 'rejected_at')) $update['rejected_at'] = now();
-        if ($this->hasColumn($version, 'rejected_reason')) $update['rejected_reason'] = $request->input('rejected_reason');
-        if ($this->hasColumn($version, 'reject_reason')) $update['reject_reason'] = $request->input('rejected_reason');
+        $reason = $request->input('rejected_reason');
+        $version->rejectByRole($reason, $user->id);
 
-        $version->update($update);
-        $this->maybeAudit('reject_version', $user->id, $version->document_id, $version->id, $request->ip(), ['reason'=>$request->input('rejected_reason')]);
+        $this->maybeAudit('reject_version', $user->id, $version->document_id, $version->id, $request->ip(), ['reason'=>$reason]);
 
         return back()->with('success','Version rejected and returned to draft.');
     }
@@ -949,6 +956,20 @@ class DocumentController extends Controller
 
         if ($requestedVersionId) {
             $version = $document->versions()->where('id', $requestedVersionId)->first();
+
+            if ($version) {
+                $user = request()->user();
+                if (!$this->canViewVersion($user, $version)) {
+                    \Illuminate\Support\Facades\Log::warning('Unauthorized document version access attempt', [
+                        'user_id' => $user ? $user->id : null,
+                        'version_id' => $version->id,
+                        'status' => $version->status,
+                        'timestamp' => now()->toDateTimeString(),
+                    ]);
+                    session()->flash('warning', 'Anda tidak memiliki hak akses untuk melihat revisi ini. Dialihkan ke versi aktif.');
+                    $version = null;
+                }
+            }
         }
 
         // prefer document.current_version_id (approved)
@@ -964,6 +985,20 @@ class DocumentController extends Controller
         // fallback: any version (draft/rejected)
         if (! $version) {
             $version = $document->versions()->orderByDesc('id')->first();
+        }
+
+        // final safety check on resolved version
+        if ($version) {
+            $user = request()->user();
+            if (!$this->canViewVersion($user, $version)) {
+                \Illuminate\Support\Facades\Log::warning('Unauthorized final document version view blocked', [
+                    'user_id' => $user ? $user->id : null,
+                    'version_id' => $version->id,
+                    'status' => $version->status,
+                    'timestamp' => now()->toDateTimeString(),
+                ]);
+                abort(403, 'Anda tidak memiliki hak akses untuk melihat dokumen ini.');
+            }
         }
 
         $versions = $document->versions->sortByDesc('id')->values();
@@ -1012,6 +1047,17 @@ class DocumentController extends Controller
 
     public function downloadVersion(DocumentVersion $version)
     {
+        $user = request()->user();
+        if (!$this->canViewVersion($user, $version)) {
+            \Illuminate\Support\Facades\Log::warning('Unauthorized downloadVersion attempt blocked', [
+                'user_id' => $user ? $user->id : null,
+                'version_id' => $version->id,
+                'status' => $version->status,
+                'timestamp' => now()->toDateTimeString(),
+            ]);
+            abort(403, 'Unauthorized to download this document version.');
+        }
+
         $disk = $this->getDisk();
 
         // Check if obsolete (approved but not current version)
@@ -1059,6 +1105,16 @@ class DocumentController extends Controller
     {
         $user = request()->user();
         if (! $user) abort(403, 'Login required.');
+
+        if (!$this->canViewVersion($user, $version)) {
+            \Illuminate\Support\Facades\Log::warning('Unauthorized downloadMaster attempt blocked', [
+                'user_id' => $user->id,
+                'version_id' => $version->id,
+                'status' => $version->status,
+                'timestamp' => now()->toDateTimeString(),
+            ]);
+            abort(403, 'Unauthorized to download this document master.');
+        }
 
         // Check if obsolete (approved but not current version)
         $document = $version->document;
@@ -1121,6 +1177,16 @@ class DocumentController extends Controller
     {
         $user = request()->user();
         if (! $user) abort(403, 'Login required.');
+
+        if (!$this->canViewVersion($user, $version)) {
+            \Illuminate\Support\Facades\Log::warning('Unauthorized previewVersion attempt blocked', [
+                'user_id' => $user->id,
+                'version_id' => $version->id,
+                'status' => $version->status,
+                'timestamp' => now()->toDateTimeString(),
+            ]);
+            abort(403, 'Unauthorized to preview this document version.');
+        }
 
         $disks = $this->getAvailableDisks();
 
@@ -1384,5 +1450,63 @@ class DocumentController extends Controller
         // non-standard requested label: append to next vN for safety, but keep user label as suffix
         $next = $this->nextVersionLabelForDocument($document);
         return $next;
+    }
+
+    protected function canViewVersion($user, $version): bool
+    {
+        if (!$user) {
+            return false;
+        }
+
+        $status = strtolower($version->status ?? '');
+
+        // APPROVED & SUPERSEDED: all logged-in users can view
+        if (in_array($status, ['approved', 'superseded'])) {
+            return true;
+        }
+
+        // Check creator
+        if ((int)$version->created_by === (int)$user->id) {
+            return true;
+        }
+
+        // Role checks
+        if (method_exists($user, 'hasAnyRole')) {
+            if ($user->hasAnyRole(['admin', 'director'])) {
+                return true;
+            }
+
+            if ($status === 'submitted' && $user->hasAnyRole(['mr'])) {
+                return true;
+            }
+        } else {
+            // Fallback role check if method doesn't exist
+            $roles = method_exists($user, 'roles') ? $user->roles()->pluck('name')->toArray() : [];
+            if (array_intersect($roles, ['admin', 'director'])) {
+                return true;
+            }
+            if ($status === 'submitted' && array_intersect($roles, ['mr'])) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    public function checkCode(Request $request)
+    {
+        $code = trim($request->query('code', ''));
+        if (empty($code)) {
+            return response()->json(['exists' => false]);
+        }
+        $doc = Document::where('doc_code', $code)->first();
+        if ($doc) {
+            return response()->json([
+                'exists' => true,
+                'doc_code' => $doc->doc_code,
+                'title' => $doc->title,
+            ]);
+        }
+        return response()->json(['exists' => false]);
     }
 }
