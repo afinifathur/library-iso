@@ -10,6 +10,10 @@ use App\Http\Controllers\ApprovalQueueController;
 use App\Http\Controllers\RevisionHistoryController;
 use App\Http\Controllers\AuditLogController;
 
+// ── PHASE C2B: FPDI POC — TEMPORARY (remove after C2B is complete) ──────────
+use App\Http\Controllers\PdfStampPocController;
+// ────────────────────────────────────────────────────────────────────────────
+
 /*
 |--------------------------------------------------------------------------
 | ISO Documents Routes (AUTH MODE)
@@ -57,4 +61,9 @@ Route::middleware('auth')->group(function () {
     Route::get('/revision-history', [RevisionHistoryController::class, 'index'])->name('revision.index');
     Route::get('/audit-log',        [AuditLogController::class, 'index'])->name('audit.index');
     Route::get('/distribution-register', [App\Http\Controllers\DistributionRegisterController::class, 'index'])->name('distribution.index');
+
+    // ── PHASE C2B: FPDI POC routes — TEMPORARY (remove after C2B) ───────────
+    Route::get('/pdf-stamp-poc',       [PdfStampPocController::class, 'index'])->name('poc.stamp.index');
+    Route::get('/pdf-stamp-poc/{type}', [PdfStampPocController::class, 'stamp'])->name('poc.stamp');
+    // ────────────────────────────────────────────────────────────────────────
 });

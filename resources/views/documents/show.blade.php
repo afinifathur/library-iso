@@ -349,10 +349,6 @@
                 <span id="pdfZoomPct" class="small-muted" style="margin-left:6px; font-weight:600;">100%</span>
               </div>
               <div style="display:flex; gap:6px;">
-                <a id="pdfOpenNew" href="{{ $pdfUrl }}" target="_blank" rel="noopener noreferrer" class="btn-small" style="background:#fff; border:1px solid #e2e8f0; font-weight:600;">Open in new tab</a>
-                @if(Route::has('documents.versions.download'))
-                  <a id="pdfDownload" href="{{ route('documents.versions.download', optional($currentVersion)->id) }}" class="btn-small" style="background:#fff; border:1px solid #e2e8f0; font-weight:600;">Download PDF</a>
-                @endif
                 <button id="pdfClose" type="button" class="btn-small" style="background:#fee2e2; color:#ef4444; border:1px solid #fecaca; font-weight:600; cursor:pointer;">Close</button>
               </div>
             </div>

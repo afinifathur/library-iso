@@ -8,11 +8,13 @@ use App\Models\DocumentVersion;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Illuminate\Support\Facades\Schema;
+use setasign\Fpdi\Fpdi;
 
 class DocumentController extends Controller
 {
@@ -1052,11 +1054,11 @@ class DocumentController extends Controller
     {
         $user = request()->user();
         if (!$this->canViewVersion($user, $version)) {
-            \Illuminate\Support\Facades\Log::warning('Unauthorized downloadVersion attempt blocked', [
-                'user_id' => $user ? $user->id : null,
+            Log::warning('Unauthorized downloadVersion attempt blocked', [
+                'user_id'    => $user ? $user->id : null,
                 'version_id' => $version->id,
-                'status' => $version->status,
-                'timestamp' => now()->toDateTimeString(),
+                'status'     => $version->status,
+                'timestamp'  => now()->toDateTimeString(),
             ]);
             abort(403, 'Unauthorized to download this document version.');
         }
@@ -1066,26 +1068,63 @@ class DocumentController extends Controller
         // Check if obsolete (approved but not current version)
         $document = $version->document;
         $isObsolete = false;
-        if ($document && $document->current_version_id && $version->id != $document->current_version_id && $version->status === 'approved') {
+        if ($document && $document->current_version_id
+            && $version->id != $document->current_version_id
+            && $version->status === 'approved') {
             $isObsolete = true;
         }
 
         // prefer pdf_path, then file_path, then master_path as fallback
-        $candidates = [$version->pdf_path ?? null, $version->file_path ?? null, $version->master_path ?? null];
+        $candidates = [
+            $version->pdf_path  ?? null,
+            $version->file_path ?? null,
+            $version->master_path ?? null,
+        ];
 
         foreach ($candidates as $p) {
             if (empty($p)) continue;
             $path = ltrim($p, '/');
             if (! $disk->exists($path)) continue;
 
-            // Log digital distribution
-            \App\Models\DocumentDistributionLog::log($version, 'download_pdf');
+            // ── 1. Log digital distribution and capture Trace ID ─────────────
+            $traceId = \App\Models\DocumentDistributionLog::log($version, 'download_pdf');
 
             $fileName = basename($path);
             if ($isObsolete) {
                 $fileName = 'OBSOLETE_' . $fileName;
             }
 
+            // ── 2. Build Controlled Copy footer text ─────────────────────────
+            // Format: SALINAN TERKENDALI | DISTR-YYYYMMDD-XXXXXX | DP.MR.01 Rev.v3 | user@email.com
+            $docCode  = $document ? ($document->doc_code ?? '') : '';
+            $verLabel = $version->version_label ?? '';
+            $userEmail = $user ? ($user->email ?? '') : '';
+
+            $footerText = implode(' | ', array_filter([
+                'SALINAN TERKENDALI',
+                $traceId,
+                trim($docCode . ' Rev.' . $verLabel),
+                $userEmail,
+            ]));
+
+            // ── 3. Attempt FPDI stamp (in memory, no disk write) ─────────────
+            $absolutePath = $disk->path($path);
+            $stampedPdf   = $this->stampPdfWithFooter($absolutePath, $footerText);
+
+            if ($stampedPdf !== null) {
+                // Success — stream the stamped PDF as attachment
+                $downloadName = $isObsolete ? 'OBSOLETE_CONTROLLED_' . $fileName : 'CONTROLLED_' . $fileName;
+                return response($stampedPdf, 200, [
+                    'Content-Type'        => 'application/pdf',
+                    'Content-Disposition' => 'attachment; filename="' . $downloadName . '"',
+                    'Content-Length'      => strlen($stampedPdf),
+                    'Cache-Control'       => 'no-store, no-cache, must-revalidate',
+                    'Pragma'              => 'no-cache',
+                ]);
+            }
+
+            // ── 4. FPDI failed — fall back to original unstamped file ────────
+            // (Exception already logged inside stampPdfWithFooter)
             try {
                 return $disk->download($path, $fileName);
             } catch (\Throwable $e) {
@@ -1093,18 +1132,101 @@ class DocumentController extends Controller
                 if ($stream === false) continue;
                 $size = $this->safeDiskCall(fn() => $disk->size($path));
                 $mime = $this->safeDiskCall(fn() => $disk->mimeType($path));
-                return response()->stream(function() use ($stream) {
+                return response()->stream(function () use ($stream) {
                     fpassthru($stream);
                     if (is_resource($stream)) fclose($stream);
                 }, 200, array_filter([
-                    'Content-Type' => $mime ?: 'application/octet-stream',
-                    'Content-Length' => $size,
-                    'Content-Disposition' => 'attachment; filename="'.$fileName.'"',
+                    'Content-Type'        => $mime ?: 'application/octet-stream',
+                    'Content-Length'      => $size,
+                    'Content-Disposition' => 'attachment; filename="' . $fileName . '"',
                 ]));
             }
         }
 
         abort(404);
+    }
+
+    /**
+     * Stamp every page of an existing PDF with a single-line gray footer.
+     *
+     * Guarantees:
+     *  - Page count is preserved exactly (no extra pages added).
+     *  - Page dimensions and orientation are auto-detected per page.
+     *  - Output is built entirely in memory (no file written to disk).
+     *  - Original file on disk is never modified.
+     *  - On any FPDI exception: logs the error and returns null (caller falls back).
+     *
+     * @param  string  $absolutePath  Full filesystem path to the source PDF.
+     * @param  string  $footerText    Single-line stamp text to print.
+     * @return string|null            Stamped PDF binary string, or null on failure.
+     */
+    private function stampPdfWithFooter(string $absolutePath, string $footerText): ?string
+    {
+        try {
+            $pdf = new Fpdi();
+            $pdf->SetCreator('Library-ISO Controlled Copy');
+            $pdf->SetAuthor('Library-ISO System');
+
+            // FIX: Disable automatic page breaks.
+            // FPDF's default AutoPageBreak=true fires when the cursor is within
+            // ~2 cm of the bottom edge. SetXY(0, $h-6) places the cursor near the
+            // physical edge, which triggers AddPage() before Cell() draws anything,
+            // producing a blank page with only the footer text. Disabling it here
+            // ensures Cell() always draws on the current page, never a new one.
+            $pdf->SetAutoPageBreak(false);
+
+            // FIX: Zero all margins so the entire page surface is printable.
+            // FPDF's default margins (10 mm top/left/right, 2 cm bottom) shrink
+            // the printable area. Without zeroing them, coordinates near the edges
+            // fall outside the printable region and trigger auto-breaks even with
+            // AutoPageBreak disabled in some FPDF versions.
+            $pdf->SetMargins(0, 0, 0);
+
+            $pageCount = $pdf->setSourceFile($absolutePath);
+
+            for ($pageNo = 1; $pageNo <= $pageCount; $pageNo++) {
+                // Import existing page — captures exact MediaBox dimensions
+                $tpl  = $pdf->importPage($pageNo);
+                $size = $pdf->getTemplateSize($tpl);
+
+                $w = (float) $size['width'];
+                $h = (float) $size['height'];
+
+                // Detect orientation from the imported page's actual dimensions
+                $orientation = ($w > $h) ? 'L' : 'P';
+
+                // Add a page with the identical size — never hardcode A4 coordinates
+                $pdf->AddPage($orientation, [$w, $h]);
+
+                // Layer the original page content at origin, full width and height
+                $pdf->useTemplate($tpl, 0, 0, $w, $h);
+
+                // ── Footer stamp ─────────────────────────────────────────────
+                // Spec: Helvetica, 6.5pt, Gray, centered, single line, bottom margin
+                $pdf->SetFont('Helvetica', '', 6.5);
+                $pdf->SetTextColor(110, 110, 110); // #6e6e6e — clearly gray, not black
+
+                // Y position: 6 points from the bottom edge (safe for all paper sizes).
+                // With AutoPageBreak=false and margins=0, this coordinate is always
+                // within the printable area and Cell() draws here without page-breaking.
+                $pdf->SetXY(0, $h - 6);
+                $pdf->Cell($w, 0, $footerText, 0, 0, 'C');
+            }
+
+            // Output to a string — no file is written
+            return $pdf->Output('S');
+
+        } catch (\Throwable $e) {
+            // Capture full context for diagnosis without crashing the download
+            Log::error('FPDI stamp failed — falling back to original PDF', [
+                'file'              => $absolutePath,
+                'exception_class'   => get_class($e),
+                'exception_message' => $e->getMessage(),
+                'exception_file'    => $e->getFile() . ':' . $e->getLine(),
+            ]);
+
+            return null; // Signals caller to serve the original file
+        }
     }
 
     public function downloadMaster(DocumentVersion $version)
@@ -1213,25 +1335,54 @@ class DocumentController extends Controller
                 $ext  = strtolower(pathinfo($path, PATHINFO_EXTENSION));
 
                 if ($mime === 'application/pdf' || $ext === 'pdf') {
-                    $stream = (method_exists($this, 'safeDiskCall')) ? $this->safeDiskCall(fn() => $disk->readStream($path)) : (function() use ($disk,$path){ try{ return $disk->readStream($path);}catch(\Throwable){return false;} })();
-                    if ($stream === false || $stream === null) continue;
-                    $size = (method_exists($this, 'safeDiskCall')) ? $this->safeDiskCall(fn() => $disk->size($path)) : null;
-
-                    // Log digital distribution
-                    \App\Models\DocumentDistributionLog::log($version, 'preview_pdf');
+                    // ── Phase D2E: Log distribution and capture Trace ID ──────────────
+                    $traceId = \App\Models\DocumentDistributionLog::log($version, 'preview_pdf');
 
                     if (method_exists($this, 'maybeAudit')) {
                         $this->maybeAudit('preview_pdf', $user->id ?? null, $version->document_id ?? null, $version->id, request()->ip(), ['path' => $path]);
                     }
 
+                    // ── Build Controlled Copy footer (same format as downloadVersion) ─
+                    $document  = $version->document;
+                    $docCode   = $document ? ($document->doc_code ?? '') : '';
+                    $verLabel  = $version->version_label ?? '';
+                    $userEmail = $user->email ?? '';
+
+                    $footerText = implode(' | ', array_filter([
+                        'SALINAN TERKENDALI',
+                        $traceId,
+                        trim($docCode . ' Rev.' . $verLabel),
+                        $userEmail,
+                    ]));
+
+                    // ── Attempt FPDI stamp in-memory (no file written to disk) ────────
+                    $absolutePath = $disk->path($path);
+                    $stampedPdf   = $this->stampPdfWithFooter($absolutePath, $footerText);
+
+                    if ($stampedPdf !== null) {
+                        // Success — stream stamped PDF inline
+                        return response($stampedPdf, 200, [
+                            'Content-Type'        => 'application/pdf',
+                            'Content-Disposition' => 'inline; filename="' . basename($path) . '"',
+                            'Content-Length'      => strlen($stampedPdf),
+                            'Cache-Control'       => 'no-store, no-cache, must-revalidate',
+                            'Pragma'              => 'no-cache',
+                        ]);
+                    }
+
+                    // ── FPDI failed — fall back to original file streamed inline ──────
+                    $stream = (method_exists($this, 'safeDiskCall')) ? $this->safeDiskCall(fn() => $disk->readStream($path)) : (function() use ($disk,$path){ try{ return $disk->readStream($path);}catch(\Throwable){return false;} })();
+                    if ($stream === false || $stream === null) continue;
+                    $size = (method_exists($this, 'safeDiskCall')) ? $this->safeDiskCall(fn() => $disk->size($path)) : null;
+
                     return response()->stream(function () use ($stream) {
                         @fpassthru($stream);
                         if (is_resource($stream)) @fclose($stream);
                     }, 200, array_filter([
-                        'Content-Type' => 'application/pdf',
-                        'Content-Length' => $size,
-                        'Content-Disposition' => 'inline; filename="'.basename($path).'"',
-                        'Cache-Control' => 'public, max-age=0, must-revalidate',
+                        'Content-Type'        => 'application/pdf',
+                        'Content-Length'      => $size,
+                        'Content-Disposition' => 'inline; filename="' . basename($path) . '"',
+                        'Cache-Control'       => 'no-store, no-cache, must-revalidate',
                     ]));
                 }
             }

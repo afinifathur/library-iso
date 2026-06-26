@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Support\DocDepartmentHelper;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -155,7 +156,18 @@ class Document extends Model
     protected static function booted(): void
     {
         static::creating(function (Document $doc) {
-            // jika doc_code belum ada namun category & department_id tersedia
+            // ── Auto-assign department_id from doc_code prefix (Phase D2B) ──────
+            // If doc_code is known but department_id is not yet set, resolve it
+            // via the shared DocDepartmentHelper (single source of truth).
+            if (! empty($doc->doc_code) && empty($doc->department_id)) {
+                $resolvedId = DocDepartmentHelper::resolveIdFromDocCode($doc->doc_code);
+                if ($resolvedId !== null) {
+                    $doc->department_id = $resolvedId;
+                }
+            }
+
+            // ── Auto-generate doc_code from category + department (original logic) ─
+            // Triggered when doc_code is absent but category & department_id are given.
             if (empty($doc->doc_code) && ! empty($doc->category) && ! empty($doc->department_id)) {
                 $dept = Department::find($doc->department_id);
 

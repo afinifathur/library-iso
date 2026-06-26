@@ -47,19 +47,23 @@ class DocumentDistributionLog extends Model
     }
 
     /**
-     * Log a new distribution action
+     * Log a new distribution action and return the generated Trace ID.
+     *
+     * Return type changed from void → string so that callers (e.g. downloadVersion)
+     * can embed the same Trace ID in the Controlled Copy footer stamp.
+     * Existing callers that ignore the return value are unaffected.
      */
-    public static function log(DocumentVersion $version, string $action): void
+    public static function log(DocumentVersion $version, string $action): string
     {
         $user = Auth::user();
         $document = $version->document;
-        
-        $deptName = ($user && $user->relationLoaded('department') && $user->department) 
-            ? $user->department->name 
+
+        $deptName = ($user && $user->relationLoaded('department') && $user->department)
+            ? $user->department->name
             : (($user && method_exists($user, 'department') && $user->department) ? $user->department->name : '-');
-            
-        $roleName = ($user && method_exists($user, 'getRoleNames')) 
-            ? $user->getRoleNames()->first() 
+
+        $roleName = ($user && method_exists($user, 'getRoleNames'))
+            ? $user->getRoleNames()->first()
             : '-';
 
         $traceId = self::generateTraceId();
@@ -80,6 +84,8 @@ class DocumentDistributionLog extends Model
             'ip_address'          => request()->ip() ?: '127.0.0.1',
             'created_at'          => now(),
         ]);
+
+        return $traceId;
     }
 
     /**

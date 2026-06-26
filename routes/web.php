@@ -65,7 +65,7 @@ Route::middleware('auth')->group(function () {
         Route::get('',                 [DocumentController::class, 'index'])->name('index');
         Route::get('create',           [DocumentController::class, 'create'])->name('create');
         Route::post('',                [DocumentController::class, 'store'])->name('store');
-        Route::post('upload-pdf',      [DocumentController::class, 'uploadPdf'])->name('uploadPdf');
+        // uploadPdf is defined (with role middleware) in routes/iso_documents.php only.
         Route::get('check-code',       [DocumentController::class, 'checkCode'])->name('checkCode');
 
         // Show / edit / update / compare
